@@ -1,17 +1,17 @@
-# 饺管家 / JiaoOps
+# 饺管家 / VPSPilot
 
 一个轻量 VPS / 服务器管理 Telegram Bot：服务器列表、状态面板、SSH 远程执行、常用测试脚本入口。
 
 ## 快速部署
 
 ```bash
-git clone <你的仓库地址> JiaoOps
-cd JiaoOps
+git clone https://github.com/shuijiao1/VPSPilot.git
+cd VPSPilot
 ./install.sh
 # 编辑 .env：填 BOT_TOKEN、ALLOWED_USERS / ADMIN_USERS
 docker compose -f docker-compose.example.yml up -d --build
 
-# 也可以直接使用公开镜像：ghcr.io/shuijiao1/jiaoops:latest
+# 也可以直接使用公开镜像：ghcr.io/shuijiao1/vpspilot:latest
 
 # 或者用 Makefile
 make init
@@ -26,14 +26,14 @@ make up
 4. 启动容器
 5. 在 Bot 里发送 `/addserver` 添加服务器
 
-> JiaoOps 必须自部署，必须使用自己的 Telegram Bot，必须配置白名单。详见 `SECURITY.md`。
+> VPSPilot 必须自部署，必须使用自己的 Telegram Bot，必须配置白名单。详见 `SECURITY.md`。
 
 ## 文件
 
 - `servers.json`：服务器清单，私有部署时自己维护
 - `servers.example.json`：可公开的示例配置
 - `auth.py`：统一 SSH 鉴权解析，支持默认值继承、每台机器独立端口、独立密钥、密码登录
-- `jiaoops.py`：命令行巡检/远程命令工具
+- `vpspilot.py`：命令行巡检/远程命令工具
 - `telegram-bot/bot.py`：Telegram Bot 主程序
 - `SECURITY.md`：安全部署说明
 - `Makefile` / `install.sh`：初始化、启动、检查辅助脚本
@@ -41,9 +41,9 @@ make up
 ## 用法
 
 ```bash
-./server-manager/jiaoops.py list
-./server-manager/jiaoops.py health
-./server-manager/jiaoops.py run <name-or-ip> 'systemctl status nginx --no-pager'
+./vpspilot.py list
+./vpspilot.py health
+./vpspilot.py run <name-or-ip> 'systemctl status nginx --no-pager'
 ```
 
 ## Telegram Bot 添加服务器
@@ -71,7 +71,7 @@ jp-01 203.0.113.20:2222 debian
 
 然后 Bot 会询问登录方式：
 
-- **沿用默认密钥/配置**：使用 `JIAOOPS_DEFAULT_KEY` 或 `servers.json` 里的 `defaults.ssh.key`，适合新服务器继续用以前那把密钥。
+- **沿用默认密钥/配置**：使用 `VPSPILOT_DEFAULT_KEY` 或 `servers.json` 里的 `defaults.ssh.key`，适合新服务器继续用以前那把密钥。
 - **使用已有密钥路径**：发送 `/data/keys/id_ed25519` 这类路径，不需要重新上传密钥。
 - **上传/粘贴新私钥**：发送 SSH 私钥文本，或直接上传私钥文件；Bot 会保存到 `/data/keys/`，权限设为 `600`，并尝试 SSH 登录测试。
 - **使用密码**：发送 SSH 密码；Bot 会保存配置并尝试登录测试。
@@ -173,17 +173,17 @@ jp-01 203.0.113.20 2222 debian password:your-password
 
 如果 `servers.json` 没写默认 SSH 信息，会使用：
 
-- `JIAOOPS_DEFAULT_USER`，默认 `root`
-- `JIAOOPS_DEFAULT_PORT`，默认 `22`
-- `JIAOOPS_DEFAULT_KEY`，默认 `/data/keys/id_ed25519`
+- `VPSPILOT_DEFAULT_USER`，默认 `root`
+- `VPSPILOT_DEFAULT_PORT`，默认 `22`
+- `VPSPILOT_DEFAULT_KEY`，默认 `/data/keys/id_ed25519`
 
 密码登录依赖 `sshpass`，Dockerfile 已包含。
 
 批量添加后可以测试：
 
 ```bash
-./server-manager/jiaoops.py list
-./server-manager/jiaoops.py run hk-01 'hostname'
+./vpspilot.py list
+./vpspilot.py run hk-01 'hostname'
 ```
 
 Bot 内还可以导出脱敏配置：

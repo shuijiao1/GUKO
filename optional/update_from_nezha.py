@@ -4,10 +4,10 @@ from pathlib import Path
 from datetime import datetime
 
 ROOT = Path(__file__).resolve().parent
-OUT = Path(os.environ.get('JIAOOPS_INV', ROOT / 'servers.json'))
-DEFAULT_KEY = os.environ.get('JIAOOPS_DEFAULT_KEY', '/data/keys/id_ed25519')
-DEFAULT_PORT = int(os.environ.get('JIAOOPS_DEFAULT_PORT', '22'))
-DEFAULT_USER = os.environ.get('JIAOOPS_DEFAULT_USER', 'root')
+OUT = Path(os.environ.get('VPSPILOT_INV', ROOT / 'servers.json'))
+DEFAULT_KEY = os.environ.get('VPSPILOT_DEFAULT_KEY', '/data/keys/id_ed25519')
+DEFAULT_PORT = int(os.environ.get('VPSPILOT_DEFAULT_PORT', '22'))
+DEFAULT_USER = os.environ.get('VPSPILOT_DEFAULT_USER', 'root')
 PANEL = os.environ.get('NEZHA_URL', os.environ.get('NEZHA_PANEL', '')).strip().removeprefix('https://').removeprefix('http://').rstrip('/')
 WS_PATH = os.environ.get('NEZHA_WS_PATH', '/api/v1/ws/server')
 SERVICE_URL = f'https://{PANEL}/api/v1/service' if PANEL else ''
@@ -15,7 +15,7 @@ SERVER_URL = f'https://{PANEL}/api/v1/server' if PANEL else ''
 LOGIN_URL = f'https://{PANEL}/api/v1/login' if PANEL else ''
 NEZHA_USER = os.environ.get('NEZHA_USER', '')
 NEZHA_PASSWORD = os.environ.get('NEZHA_PASSWORD', '')
-ALIASES = json.loads(os.environ.get('JIAOOPS_ALIASES_JSON', '{}') or '{}')
+ALIASES = json.loads(os.environ.get('VPSPILOT_ALIASES_JSON', '{}') or '{}')
 
 def now_iso():
     return datetime.now().astimezone().isoformat(timespec='seconds')

@@ -1,9 +1,9 @@
 services:
-  jiaoops-bot:
+  vpspilot-bot:
     build:
       context: .
       dockerfile: telegram-bot/Dockerfile
-    container_name: jiaoops-bot
+    container_name: vpspilot-bot
     restart: unless-stopped
     env_file: .env
     volumes:
