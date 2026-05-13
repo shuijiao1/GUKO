@@ -33,16 +33,57 @@ Prepare first:
 
 Two deployment methods are available. **Docker Compose is recommended**.
 
-### Method 1: Docker Compose (recommended)
+### Method 1: Docker Compose (recommended, no git clone)
 
 ```bash
-git clone https://github.com/shuijiao1/VPSPilot.git
-cd VPSPilot
-./install.sh
+mkdir -p vpspilot/keys vpspilot/media vpspilot/tmp
+cd vpspilot
+
+curl -Lo docker-compose.yml https://raw.githubusercontent.com/shuijiao1/VPSPilot/main/docker-compose.example.yml
+
+cat > .env <<'EOF'
+BOT_TOKEN=replace-me
+ALLOWED_USERS=123456789
+ADMIN_USERS=123456789
+DATA_DIR=/data
+VPSPILOT_INV=/data/servers.json
+MEDIA_DIR=/data/media
+TMP_DIR=/data/tmp
+KEYS_DIR=/data/keys
+VPSPILOT_DEFAULT_USER=root
+VPSPILOT_DEFAULT_PORT=22
+VPSPILOT_DEFAULT_KEY=/data/keys/id_ed25519
+ENABLE_REMOTE_RUN=false
+ENABLE_BGP=true
+ENABLE_IPPURE=true
+ENABLE_IPQ=true
+ENABLE_NQ=true
+ENABLE_GB5=true
+ENABLE_STREAM=true
+ENABLE_NEXTTRACE=true
+ALLOW_INSECURE_STARTUP=false
+EOF
+
+cat > servers.json <<'EOF'
+{
+  "defaults": {
+    "ssh": {
+      "user": "root",
+      "port": 22,
+      "key": "/data/keys/id_ed25519"
+    }
+  },
+  "servers": []
+}
+EOF
+
 nano .env
+docker compose pull
+docker compose up -d
+docker compose logs -f
 ```
 
-Fill at least these values in `.env`:
+Only these values need to be changed in the minimal config first:
 
 ```env
 BOT_TOKEN=replace-me
@@ -50,29 +91,17 @@ ALLOWED_USERS=123456789
 ADMIN_USERS=123456789
 ```
 
-Start the service:
+After startup, send `/addserver` to the Bot to add your first server.
 
-```bash
-docker compose -f docker-compose.example.yml up -d --build
-docker compose -f docker-compose.example.yml logs -f
-```
-
-The script will:
-
-1. Copy `.env.example` to `.env`.
-2. Copy `servers.example.json` to `servers.json`.
-3. Create `keys/`, `media/`, and `tmp/` directories.
-4. Remind you to fill in Bot Token and whitelist user IDs.
-
-### Method 2: Makefile
+### Method 2: Source build (development)
 
 ```bash
 git clone https://github.com/shuijiao1/VPSPilot.git
 cd VPSPilot
-make init
+./install.sh
 nano .env
-make up
-make logs
+docker compose -f docker-compose.example.yml up -d --build
+docker compose -f docker-compose.example.yml logs -f
 ```
 
 ---

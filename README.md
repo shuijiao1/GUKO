@@ -33,16 +33,57 @@
 
 提供 2 种部署方式，**推荐 Docker Compose**。
 
-### 方式一：Docker Compose（推荐）
+### 方式一：Docker Compose（推荐，无需 git clone）
 
 ```bash
-git clone https://github.com/shuijiao1/VPSPilot.git
-cd VPSPilot
-./install.sh
+mkdir -p vpspilot/keys vpspilot/media vpspilot/tmp
+cd vpspilot
+
+curl -Lo docker-compose.yml https://raw.githubusercontent.com/shuijiao1/VPSPilot/main/docker-compose.example.yml
+
+cat > .env <<'EOF'
+BOT_TOKEN=replace-me
+ALLOWED_USERS=123456789
+ADMIN_USERS=123456789
+DATA_DIR=/data
+VPSPILOT_INV=/data/servers.json
+MEDIA_DIR=/data/media
+TMP_DIR=/data/tmp
+KEYS_DIR=/data/keys
+VPSPILOT_DEFAULT_USER=root
+VPSPILOT_DEFAULT_PORT=22
+VPSPILOT_DEFAULT_KEY=/data/keys/id_ed25519
+ENABLE_REMOTE_RUN=false
+ENABLE_BGP=true
+ENABLE_IPPURE=true
+ENABLE_IPQ=true
+ENABLE_NQ=true
+ENABLE_GB5=true
+ENABLE_STREAM=true
+ENABLE_NEXTTRACE=true
+ALLOW_INSECURE_STARTUP=false
+EOF
+
+cat > servers.json <<'EOF'
+{
+  "defaults": {
+    "ssh": {
+      "user": "root",
+      "port": 22,
+      "key": "/data/keys/id_ed25519"
+    }
+  },
+  "servers": []
+}
+EOF
+
 nano .env
+docker compose pull
+docker compose up -d
+docker compose logs -f
 ```
 
-`.env` 至少填写：
+最小配置里只需要先改：
 
 ```env
 BOT_TOKEN=replace-me
@@ -50,29 +91,17 @@ ALLOWED_USERS=123456789
 ADMIN_USERS=123456789
 ```
 
-启动：
+启动后在 Bot 里发送 `/addserver` 添加第一台服务器。
 
-```bash
-docker compose -f docker-compose.example.yml up -d --build
-docker compose -f docker-compose.example.yml logs -f
-```
-
-脚本会：
-
-1. 复制 `.env.example` 为 `.env`。
-2. 复制 `servers.example.json` 为 `servers.json`。
-3. 创建 `keys/`、`media/`、`tmp/` 目录。
-4. 提示你填写 Bot Token 和白名单用户 ID。
-
-### 方式二：Makefile
+### 方式二：源码构建（开发用）
 
 ```bash
 git clone https://github.com/shuijiao1/VPSPilot.git
 cd VPSPilot
-make init
+./install.sh
 nano .env
-make up
-make logs
+docker compose -f docker-compose.example.yml up -d --build
+docker compose -f docker-compose.example.yml logs -f
 ```
 
 ---
