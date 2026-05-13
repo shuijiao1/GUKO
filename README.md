@@ -1,9 +1,9 @@
-# 🥟 饺管家 / VPSPilot
+# VPSPilot
 
 [![Docker Image](https://img.shields.io/badge/ghcr.io-vpspilot-blue?logo=docker)](https://github.com/shuijiao1/VPSPilot/pkgs/container/vpspilot)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**中文**
+**中文** | [English](README.en.md)
 
 **轻量 VPS / 服务器管理 Telegram Bot：服务器状态面板、SSH 登录管理、常用测试脚本入口**
 
@@ -87,7 +87,7 @@ make logs
 /start
 ```
 
-Bot 会显示饺管家总览面板，可以点服务器查看详情。
+Bot 会显示 VPSPilot 总览面板，可以点服务器查看详情。
 
 ### 添加服务器
 
@@ -163,7 +163,7 @@ jp-01 203.0.113.20 2222 debian password:your-password
 
 ### 命令
 
-- `/start` — 打开饺管家面板
+- `/start` — 打开 VPSPilot 面板
 - `/list` — 查看服务器列表
 - `/status` — 查看总览状态
 - `/addserver` — 添加 / 批量导入服务器
