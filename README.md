@@ -1,60 +1,103 @@
-# 饺管家 / VPSPilot
+# 🥟 饺管家 / VPSPilot
 
-一个轻量 VPS / 服务器管理 Telegram Bot：服务器列表、状态面板、SSH 远程执行、常用测试脚本入口。
+[![Docker Image](https://img.shields.io/badge/ghcr.io-vpspilot-blue?logo=docker)](https://github.com/shuijiao1/VPSPilot/pkgs/container/vpspilot)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-## 快速部署
+**中文**
+
+**轻量 VPS / 服务器管理 Telegram Bot：服务器状态面板、SSH 登录管理、常用测试脚本入口**
+
+> 私聊打开 Bot 就能查看服务器列表、状态详情、流量与资源占用；支持在 Telegram 内添加服务器、测试 SSH、运行 IP 质量 / NodeQuality / 流媒体 / NextTrace / GB5 等常用检测。  
+> 默认白名单模式，适合自托管。
+
+---
+
+## 🎯 核心特性
+
+- **服务器状态面板**：展示在线数量、CPU / 内存 / 硬盘、流量、实时网速、系统信息等。
+- **Telegram 内添加服务器**：支持单台添加、批量导入、编辑、删除和 SSH 连通性测试。
+- **灵活 SSH 鉴权**：支持默认密钥继承、每台独立密钥、已有密钥路径、上传 / 粘贴私钥、密码登录。
+- **常用测试入口**：支持 IP 质量、NodeQuality、流媒体解锁、NextTrace、GB5 等任务。
+- **IP / 域名工具**：支持 IPPure 官方图片与 bgp.tools BGP 路由图。
+- **安全默认值**：必须配置白名单；远程命令执行默认关闭，需要显式开启。
+- **适合 Docker 部署**：提供 Docker Compose、Makefile 和初始化脚本。
+
+---
+
+## 🚀 快速开始
+
+先准备：
+
+1. 到 [@BotFather](https://t.me/BotFather) 创建 Bot，拿到 `BOT_TOKEN`。
+2. 用 [@userinfobot](https://t.me/userinfobot) 或 [@RawDataBot](https://t.me/RawDataBot) 获取你的 Telegram 数字用户 ID。
+
+提供 2 种部署方式，**推荐 Docker Compose**。
+
+### 方式一：Docker Compose（推荐）
 
 ```bash
 git clone https://github.com/shuijiao1/VPSPilot.git
 cd VPSPilot
 ./install.sh
-# 编辑 .env：填 BOT_TOKEN、ALLOWED_USERS / ADMIN_USERS
-docker compose -f docker-compose.example.yml up -d --build
-
-# 也可以直接使用公开镜像：ghcr.io/shuijiao1/vpspilot:latest
-
-# 或者用 Makefile
-make init
-make up
+nano .env
 ```
 
-部署步骤：
+`.env` 至少填写：
 
-1. 去 Telegram BotFather 创建自己的 Bot，拿到 `BOT_TOKEN`
-2. 给 Bot 发 `/start`，从“无权限”提示里看到自己的 Telegram ID
-3. 把 ID 写入 `.env` 的 `ALLOWED_USERS` 和 `ADMIN_USERS`
-4. 启动容器
-5. 在 Bot 里发送 `/addserver` 添加服务器
+```env
+BOT_TOKEN=replace-me
+ALLOWED_USERS=123456789
+ADMIN_USERS=123456789
+```
 
-> VPSPilot 必须自部署，必须使用自己的 Telegram Bot，必须配置白名单。详见 `SECURITY.md`。
-
-## 文件
-
-- `servers.json`：服务器清单，私有部署时自己维护
-- `servers.example.json`：可公开的示例配置
-- `auth.py`：统一 SSH 鉴权解析，支持默认值继承、每台机器独立端口、独立密钥、密码登录
-- `vpspilot.py`：命令行巡检/远程命令工具
-- `telegram-bot/bot.py`：Telegram Bot 主程序
-- `SECURITY.md`：安全部署说明
-- `Makefile` / `install.sh`：初始化、启动、检查辅助脚本
-
-## 用法
+启动：
 
 ```bash
-./vpspilot.py list
-./vpspilot.py health
-./vpspilot.py run <name-or-ip> 'systemctl status nginx --no-pager'
+docker compose -f docker-compose.example.yml up -d --build
+docker compose -f docker-compose.example.yml logs -f
 ```
 
-## Telegram Bot 添加服务器
+脚本会：
 
-打开 Bot 后点 **➕ 添加服务器**，或者发送：
+1. 复制 `.env.example` 为 `.env`。
+2. 复制 `servers.example.json` 为 `servers.json`。
+3. 创建 `keys/`、`media/`、`tmp/` 目录。
+4. 提示你填写 Bot Token 和白名单用户 ID。
+
+### 方式二：Makefile
+
+```bash
+git clone https://github.com/shuijiao1/VPSPilot.git
+cd VPSPilot
+make init
+nano .env
+make up
+make logs
+```
+
+---
+
+## 💬 使用方式
+
+### 打开面板
+
+私聊 Bot 发送：
+
+```text
+/start
+```
+
+Bot 会显示饺管家总览面板，可以点服务器查看详情。
+
+### 添加服务器
+
+点击 **➕ 添加服务器**，或者发送：
 
 ```text
 /addserver
 ```
 
-### 单台添加
+#### 单台添加
 
 选择 **添加单台**，按提示发送：
 
@@ -71,8 +114,8 @@ jp-01 203.0.113.20:2222 debian
 
 然后 Bot 会询问登录方式：
 
-- **沿用默认密钥/配置**：使用 `VPSPILOT_DEFAULT_KEY` 或 `servers.json` 里的 `defaults.ssh.key`，适合新服务器继续用以前那把密钥。
-- **使用已有密钥路径**：发送 `/data/keys/id_ed25519` 这类路径，不需要重新上传密钥。
+- **沿用默认密钥/配置**：使用 `VPSPILOT_DEFAULT_KEY` 或 `servers.json` 里的 `defaults.ssh.key`。
+- **使用已有密钥路径**：发送 `/data/keys/id_ed25519` 这类路径。
 - **上传/粘贴新私钥**：发送 SSH 私钥文本，或直接上传私钥文件；Bot 会保存到 `/data/keys/`，权限设为 `600`，并尝试 SSH 登录测试。
 - **使用密码**：发送 SSH 密码；Bot 会保存配置并尝试登录测试。
 - **先只保存，不测试登录**：只写入服务器清单，后续再补认证。
@@ -86,12 +129,12 @@ jp-01 203.0.113.20:2222 debian
 
 服务器详情页也支持 **编辑** 和 **删除**；删除需要二次确认，只会删除本地配置，不会操作远端机器。
 
-### 批量导入
+#### 批量导入
 
 选择 **批量导入** 后，Bot 会先问：
 
-1. 是否全部使用同一个 SSH 端口，还是每台自己写端口
-2. 是否全部使用同一把密钥、同一个密码、每台自己写认证，还是先只导入不测试
+1. 是否全部使用同一个 SSH 端口，还是每台自己写端口。
+2. 是否全部使用同一把密钥、同一个密码、每台自己写认证，还是先只导入不测试。
 
 常用批量格式：
 
@@ -116,9 +159,126 @@ hk-01 203.0.113.10 22 root key:/data/keys/hk_ed25519
 jp-01 203.0.113.20 2222 debian password:your-password
 ```
 
-> 注意：Telegram 里发送密码/私钥会经过 Telegram 云端。自用没问题；公开项目建议提醒用户优先用私有 Bot，并限制 `ALLOWED_USERS`。
+> Telegram 里发送密码 / 私钥会经过 Telegram 云端。建议使用私有 Bot，并限制 `ALLOWED_USERS`。
 
-## 直接写配置文件批量添加
+### 命令
+
+- `/start` — 打开饺管家面板
+- `/list` — 查看服务器列表
+- `/status` — 查看总览状态
+- `/addserver` — 添加 / 批量导入服务器
+- `/testssh <名字/IP/ID/别名>` — 测试单台服务器 SSH
+- `/testall` — 批量测试 SSH
+- `/exportconfig` — 导出脱敏配置
+- `/info <名字/IP/ID/别名>` — 查看单台详情
+- `/health` — 只读巡检
+- `/jobs` — 查看后台任务
+- `/ip <IPv4 或域名>` — IPPure / BGP 工具
+- `/nexttrace <服务器> <目标>` — 路由追踪
+- `/run <服务器> <命令>` — 远程执行命令，仅 `ENABLE_REMOTE_RUN=true` 时启用
+
+---
+
+## ⚙️ 配置说明
+
+`.env` 示例：
+
+```env
+BOT_TOKEN=replace-me
+ALLOWED_USERS=123456789
+ADMIN_USERS=123456789
+DATA_DIR=/data
+VPSPILOT_INV=/data/servers.json
+MEDIA_DIR=/data/media
+TMP_DIR=/data/tmp
+KEYS_DIR=/data/keys
+VPSPILOT_DEFAULT_USER=root
+VPSPILOT_DEFAULT_PORT=22
+VPSPILOT_DEFAULT_KEY=/data/keys/id_ed25519
+ENABLE_REMOTE_RUN=false
+ENABLE_BGP=true
+ENABLE_IPPURE=true
+ENABLE_IPQ=true
+ENABLE_NQ=true
+ENABLE_GB5=true
+ENABLE_STREAM=true
+ENABLE_NEXTTRACE=true
+ALLOW_INSECURE_STARTUP=false
+```
+
+| 变量 | 是否必填 | 默认值 | 说明 |
+|---|---:|---|---|
+| `BOT_TOKEN` | 是 | - | Telegram Bot Token |
+| `ALLOWED_USERS` | 是 | - | 允许使用 Bot 的 Telegram 数字 ID，多个用英文逗号分隔 |
+| `ADMIN_USERS` | 否 | `ALLOWED_USERS` | 管理员 ID，能添加 / 删除服务器、执行高危功能 |
+| `DATA_DIR` | 否 | `/data` | 容器内数据目录 |
+| `VPSPILOT_INV` | 否 | `/data/servers.json` | 服务器清单路径 |
+| `MEDIA_DIR` | 否 | `/data/media` | 图片和报告输出目录 |
+| `TMP_DIR` | 否 | `/data/tmp` | 临时文件目录 |
+| `KEYS_DIR` | 否 | `/data/keys` | SSH 私钥保存目录 |
+| `VPSPILOT_DEFAULT_USER` | 否 | `root` | 默认 SSH 用户 |
+| `VPSPILOT_DEFAULT_PORT` | 否 | `22` | 默认 SSH 端口 |
+| `VPSPILOT_DEFAULT_KEY` | 否 | `/data/keys/id_ed25519` | 默认 SSH 私钥路径 |
+| `ENABLE_REMOTE_RUN` | 否 | `false` | 是否启用 `/run` 远程执行命令 |
+| `ENABLE_BGP` | 否 | `true` | 是否启用 BGP 图功能 |
+| `ENABLE_IPPURE` | 否 | `true` | 是否启用 IPPure 图功能 |
+| `ENABLE_IPQ` | 否 | `true` | 是否启用 IP 质量功能 |
+| `ENABLE_NQ` | 否 | `true` | 是否启用 NodeQuality 功能 |
+| `ENABLE_GB5` | 否 | `true` | 是否启用 GB5 功能 |
+| `ENABLE_STREAM` | 否 | `true` | 是否启用流媒体检测 |
+| `ENABLE_NEXTTRACE` | 否 | `true` | 是否启用 NextTrace |
+| `BGP_FETCH` | 否 | `/data/tools/bgp_fetch.py` | BGP 图片工具脚本路径 |
+| `IPPURE_DOWNLOAD` | 否 | `/data/tools/download_ippure.js` | IPPure 下载脚本路径 |
+| `ALLOW_INSECURE_STARTUP` | 否 | `false` | 开发 / 迁移时跳过安全启动检查 |
+
+> `BOT_TOKEN` 和 `ALLOWED_USERS` 必须填写；不要把真实 `.env` 提交到仓库。
+
+---
+
+## 🛠 运维
+
+所有持久化数据在安装目录下：
+
+```text
+VPSPilot/
+├── docker-compose.example.yml
+├── .env
+├── servers.json       # 私有服务器清单
+├── keys/              # SSH 私钥
+├── media/             # 报告图片 / 输出文件
+└── tmp/               # 临时文件
+```
+
+常用命令：
+
+```bash
+cd <安装目录>
+docker compose -f docker-compose.example.yml ps
+docker compose -f docker-compose.example.yml logs -f
+docker compose -f docker-compose.example.yml restart
+docker compose -f docker-compose.example.yml down
+```
+
+升级：
+
+```bash
+cd <安装目录>
+git pull
+docker compose -f docker-compose.example.yml up -d --build
+```
+
+也可以使用 Makefile：
+
+```bash
+make up
+make logs
+make restart
+make down
+```
+
+---
+
+## 🧾 直接写配置文件批量添加
 
 推荐在 `defaults.ssh` 里写公共默认值，每台服务器只覆盖不同的部分：
 
@@ -169,16 +329,6 @@ jp-01 203.0.113.20 2222 debian password:your-password
 }
 ```
 
-### 环境变量默认值
-
-如果 `servers.json` 没写默认 SSH 信息，会使用：
-
-- `VPSPILOT_DEFAULT_USER`，默认 `root`
-- `VPSPILOT_DEFAULT_PORT`，默认 `22`
-- `VPSPILOT_DEFAULT_KEY`，默认 `/data/keys/id_ed25519`
-
-密码登录依赖 `sshpass`，Dockerfile 已包含。
-
 批量添加后可以测试：
 
 ```bash
@@ -192,17 +342,48 @@ Bot 内还可以导出脱敏配置：
 /exportconfig
 ```
 
-## 可选工具自动准备
+---
 
-- IP质量 / NodeQuality / 流媒体 / NextTrace / GB5 都是在目标服务器通过 SSH 执行对应公开脚本；首次运行会按脚本自身逻辑安装或下载依赖。
+## 🧩 可选工具自动准备
+
+- IP 质量 / NodeQuality / 流媒体 / NextTrace / GB5 都是在目标服务器通过 SSH 执行对应公开脚本；首次运行会按脚本自身逻辑安装或下载依赖。
 - BGP 图和 IPPure 图是在 Bot 容器本地生成；默认 Dockerfile 已包含 Node.js、Playwright、Chromium 和渲染依赖。
 - 如果 `BGP_FETCH` 或 `IPPURE_DOWNLOAD` 指向的脚本不存在，Bot 会尝试自动下载工具脚本；失败时会给出明确错误。
 - 可以通过环境变量关闭某些按钮：`ENABLE_BGP=false`、`ENABLE_IPPURE=false`、`ENABLE_IPQ=false`、`ENABLE_NQ=false`、`ENABLE_GB5=false`、`ENABLE_STREAM=false`、`ENABLE_NEXTTRACE=false`。
 
-> 开源时不要提交真实 `servers.json`、Bot Token、密码或私钥。提交 `servers.example.json` 即可。
+---
 
-## 原则
+## 🧩 源码运行（开发用）
 
-- 只读巡检可直接跑
-- 更新、改配置、重启服务前先验证
-- 删除数据、重装、停服务、防火墙改动前先确认
+```bash
+git clone https://github.com/shuijiao1/VPSPilot.git
+cd VPSPilot
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r telegram-bot/requirements.txt
+cp .env.example .env
+cp servers.example.json servers.json
+nano .env
+python3 telegram-bot/bot.py
+```
+
+语法检查：
+
+```bash
+make check
+```
+
+---
+
+## 🔐 隐私说明
+
+- 仓库不包含任何 Bot Token、真实用户 ID、服务器密码或私钥。
+- `.env`、`servers.json`、`keys/`、`media/`、`tmp/` 已加入 `.gitignore`，不要提交真实配置。
+- 默认白名单模式，未配置允许用户时会拒绝启动。
+- 远程命令执行默认关闭；如需使用 `/run`，需要显式设置 `ENABLE_REMOTE_RUN=true`。
+- 使用 IPPure、bgp.tools、NodeQuality、流媒体检测等功能时，会访问对应第三方服务。
+- 删除服务器只会删除 Bot 本地配置，不会删除或重装远端机器。
+
+## License
+
+MIT
