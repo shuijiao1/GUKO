@@ -2,7 +2,7 @@ FROM python:3.13-slim
 WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN apt-get update \
- && apt-get install -y --no-install-recommends openssh-client sshpass ca-certificates fonts-dejavu-core fonts-noto-cjk curl gnupg \
+ && apt-get install -y --no-install-recommends openssh-client sshpass ca-certificates fonts-dejavu-core fonts-noto-cjk curl gnupg librsvg2-bin \
  && curl -fsSL https://deb.nodesource.com/setup_24.x | bash - \
  && apt-get install -y --no-install-recommends nodejs \
  && rm -rf /var/lib/apt/lists/*

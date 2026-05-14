@@ -254,7 +254,7 @@ def upsert_server(item: dict):
             item.setdefault('id', old.get('id') or old.get('legacy_id') or next_manual_id(servers))
             item.setdefault('state', old.get('state') or {})
             merged = dict(old)
-            merged.update(item)
+            merged.update(enrich_server_geo(item))
             servers[i] = merged
             replaced = True
             break
@@ -263,7 +263,7 @@ def upsert_server(item: dict):
         item.setdefault('role', 'manual')
         item.setdefault('source', 'local-manual')
         item.setdefault('state', {})
-        servers.append(item)
+        servers.append(enrich_server_geo(item))
     inv['updated_at'] = datetime.now().astimezone().isoformat(timespec='seconds')
     save_inventory(inv)
     return item, 'updated' if replaced else 'added'
@@ -386,8 +386,36 @@ def safe_target(value):
 
 
 def country_flag(code):
-    flags = {'hk': '🇭🇰', 'jp': '🇯🇵', 'sg': '🇸🇬', 'us': '🇺🇸', 'de': '🇩🇪'}
-    return flags.get((code or '').lower(), '🌐')
+    code = (code or '').strip().upper()
+    if len(code) != 2 or not code.isalpha():
+        return '🌐'
+    return chr(0x1F1E6 + ord(code[0]) - ord('A')) + chr(0x1F1E6 + ord(code[1]) - ord('A'))
+
+
+def geolocate_host(host, timeout=4):
+    ip = extract_ipv4(host or '')
+    if not ip:
+        return None
+    try:
+        url = f'http://ip-api.com/json/{ip}?fields=status,countryCode,query,message'
+        req = urllib.request.Request(url, headers={'User-Agent': 'VPSPilot/1.0'})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode(errors='replace'))
+        if data.get('status') == 'success' and data.get('countryCode'):
+            return str(data['countryCode']).lower()
+    except Exception:
+        return None
+    return None
+
+
+def enrich_server_geo(item):
+    if item.get('country'):
+        item['country'] = str(item.get('country')).lower()
+        return item
+    code = geolocate_host(item.get('host'))
+    if code:
+        item['country'] = code
+    return item
 
 
 ANSI_RE = re.compile(r'\x1b\[[0-?]*[ -/]*[@-~]')
@@ -701,6 +729,8 @@ STREAM_REGION_BY_COUNTRY = {
 
 def stream_region_for_server(s):
     code = str(s.get('country') or '').lower()
+    if not code:
+        code = geolocate_host(s.get('host')) or ''
     return STREAM_REGION_BY_COUNTRY.get(code, ('0', '只测跨国平台'))
 
 
@@ -813,7 +843,7 @@ def build_server_item(name, host, user, port, auth_kind=None, password=None, key
         item['ssh']['key'] = key or ''
     elif auth_kind == 'default':
         item['ssh']['auth'] = 'key'
-    return item
+    return enrich_server_geo(item)
 
 
 def parse_bulk_lines(text, *, same_port=None, auth_mode='skip', shared_auth=None):
