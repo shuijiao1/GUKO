@@ -29,7 +29,7 @@ from telegram.error import BadRequest
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
 DATA_DIR = Path(os.environ.get('DATA_DIR', '/data'))
-SERVERS_JSON = Path(os.environ.get('VPSPILOT_INV') or os.environ.get('JIAOOPS_INV', DATA_DIR / 'servers.json'))
+SERVERS_JSON = Path(os.environ.get('VPSPILOT_INV') or DATA_DIR / 'servers.json')
 MEDIA_DIR = Path(os.environ.get('MEDIA_DIR', DATA_DIR / 'media'))
 TMP_DIR = Path(os.environ.get('TMP_DIR', DATA_DIR / 'tmp'))
 KEYS_DIR = Path(os.environ.get('KEYS_DIR', DATA_DIR / 'keys'))
@@ -151,7 +151,7 @@ def next_manual_id(servers):
     used = set()
     for s in servers:
         try:
-            used.add(int(s.get('nezha_id')))
+            used.add(int(server_id(s)))
         except Exception:
             pass
     n = -1
@@ -185,11 +185,24 @@ def redact_inventory(inv: dict):
     return data
 
 
+def server_id(s):
+    for key in ('id', 'legacy_id', 'nezha_id'):
+        if s.get(key) is not None:
+            return s.get(key)
+    host = str(s.get('host') or '').strip()
+    if host:
+        port = (s.get('ssh') or {}).get('port') or s.get('port')
+        if port:
+            safe_host = re.sub(r'[^A-Za-z0-9_.-]+', '_', host).strip('_')
+            return f'{safe_host}-{port}'
+        return host
+    return s.get('name')
+
 def update_server_by_id(sid: str, patch: dict):
     inv = load_inventory()
     servers = inv.get('servers') or []
     for i, s in enumerate(servers):
-        if str(s.get('nezha_id')) == str(sid):
+        if str(server_id(s)) == str(sid):
             merged = dict(s)
             ssh = dict(merged.get('ssh') or {})
             for k in ('name', 'host', 'aliases', 'role'):
@@ -211,7 +224,7 @@ def delete_server_by_id(sid: str):
     kept = []
     removed = None
     for s in servers:
-        if str(s.get('nezha_id')) == str(sid):
+        if str(server_id(s)) == str(sid):
             removed = s
         else:
             kept.append(s)
@@ -226,13 +239,19 @@ def delete_server_by_id(sid: str):
 def upsert_server(item: dict):
     inv = load_inventory()
     servers = inv.setdefault('servers', [])
-    q = {str(x).lower() for x in [item.get('name'), item.get('host')] if x}
+    q = {str(x).lower() for x in [item.get('name'), str(item.get('id') or item.get('legacy_id') or '')] if x}
+    q.update(str(x).lower() for x in (item.get('aliases') or []))
+    item_host = str(item.get('host') or '').lower()
+    item_port = (item.get('ssh') or {}).get('port') or item.get('port')
     replaced = False
     for i, old in enumerate(servers):
-        fields = {str(x).lower() for x in [old.get('name'), old.get('host'), str(old.get('nezha_id'))] if x}
+        fields = {str(x).lower() for x in [old.get('name'), str(old.get('id') or old.get('legacy_id') or '')] if x}
         fields.update(str(x).lower() for x in (old.get('aliases') or []))
-        if q & fields:
-            item.setdefault('nezha_id', old.get('nezha_id') or next_manual_id(servers))
+        old_host = str(old.get('host') or '').lower()
+        old_port = (old.get('ssh') or {}).get('port') or old.get('port')
+        same_endpoint = item_host and old_host == item_host and (not item_port or not old_port or str(item_port) == str(old_port))
+        if (q & fields) or same_endpoint:
+            item.setdefault('id', old.get('id') or old.get('legacy_id') or next_manual_id(servers))
             item.setdefault('state', old.get('state') or {})
             merged = dict(old)
             merged.update(item)
@@ -240,13 +259,12 @@ def upsert_server(item: dict):
             replaced = True
             break
     if not replaced:
-        item.setdefault('nezha_id', next_manual_id(servers))
+        item.setdefault('id', next_manual_id(servers))
         item.setdefault('role', 'manual')
-        item.setdefault('source', 'telegram-manual')
+        item.setdefault('source', 'local-manual')
         item.setdefault('state', {})
         servers.append(item)
     inv['updated_at'] = datetime.now().astimezone().isoformat(timespec='seconds')
-    inv['online'] = sum(1 for s in servers if s.get('last_active')) if any(s.get('last_active') for s in servers) else inv.get('online', 0)
     save_inventory(inv)
     return item, 'updated' if replaced else 'added'
 
@@ -383,6 +401,14 @@ def safe(s):
     return html.escape(str(s)) if s is not None else '-'
 
 
+def running_text(s, task):
+    return f'正在运行中：{safe(s.get("name"))} {task}'
+
+
+async def send_running_notice(bot, chat_id, s, task):
+    await bot.send_message(chat_id, running_text(s, task), parse_mode=ParseMode.HTML)
+
+
 def is_valid_hostname(value):
     text = str(value or '').strip()
     if not text or len(text) > 253 or ' ' in text:
@@ -442,7 +468,7 @@ def script_command_html(kind, **kwargs):
 def find_server(name: str, servers: Iterable[dict]):
     q = name.lower()
     for s in servers:
-        fields = [s.get('name'), s.get('host'), str(s.get('nezha_id'))]
+        fields = [s.get('name'), s.get('host'), str(server_id(s))]
         fields += s.get('aliases') or []
         if any((f or '').lower() == q for f in fields):
             return s
@@ -458,8 +484,7 @@ def find_server_by_id(sid: str):
 
 
 def server_button_label(s):
-    st = s.get('state') or {}
-    return f"{country_flag(s.get('country'))} {s.get('name')} · {float(st.get('cpu') or 0):.0f}%"
+    return f"{country_flag(s.get('country'))} {s.get('name')}"
 
 
 def main_menu_markup():
@@ -467,15 +492,12 @@ def main_menu_markup():
     rows = []
     for i in range(0, len(servers), 2):
         rows.append([
-            InlineKeyboardButton(server_button_label(s), callback_data=f"srv:{s.get('nezha_id')}")
+            InlineKeyboardButton(server_button_label(s), callback_data=f"srv:{server_id(s)}")
             for s in servers[i:i+2]
         ])
     rows.append([
         InlineKeyboardButton('➕ 添加服务器', callback_data='add:start'),
         InlineKeyboardButton('📥 批量导入', callback_data='add:bulk'),
-    ])
-    rows.append([
-        InlineKeyboardButton('🩺 巡检', callback_data='act:health'),
     ])
     return InlineKeyboardMarkup(rows)
 
@@ -548,7 +570,7 @@ def tool_enabled(name):
 
 
 def server_markup(s):
-    sid = s.get('nezha_id')
+    sid = server_id(s)
     host = s.get('host') or ''
     rows = []
     if host:
@@ -576,17 +598,16 @@ def server_markup(s):
         image_row.append(InlineKeyboardButton('🧼 IPPure', callback_data=f'ippure:{sid}'))
     if image_row:
         rows.append(image_row)
-    if tool_enabled('nexttrace'):
-        rows.append([
-            InlineKeyboardButton('🛣 NextTrace', callback_data=f'ntask:{sid}'),
-        ])
-    rows.append([
+    ops_row = [
+        InlineKeyboardButton('📋 当前任务', callback_data=f'jobsrv:{sid}'),
         InlineKeyboardButton('🧪 测试SSH', callback_data=f'testssh:{sid}'),
+    ]
+    if tool_enabled('nexttrace'):
+        ops_row.append(InlineKeyboardButton('🛣 NextTrace', callback_data=f'ntask:{sid}'))
+    rows.append(ops_row)
+    rows.append([
         InlineKeyboardButton('✏️ 编辑', callback_data=f'edit:{sid}'),
         InlineKeyboardButton('🗑 删除', callback_data=f'delask:{sid}'),
-    ])
-    rows.append([
-        InlineKeyboardButton('🔄 刷新', callback_data=f'refresh:{sid}'),
         InlineKeyboardButton('↩️ 返回列表', callback_data='act:list'),
     ])
     return InlineKeyboardMarkup(rows)
@@ -604,7 +625,7 @@ NQ_IP_MODES = {'4': '仅 IPv4', '46': 'IPv4 + IPv6'}
 
 
 def confirm_nq_markup(s, mask=NQ_DEFAULT_MASK, ip_mode='4'):
-    sid = s.get('nezha_id')
+    sid = server_id(s)
     rows = []
     for _key, label, _full, bit in NQ_ITEMS:
         mark = '✅' if mask & bit else '☐'
@@ -621,7 +642,7 @@ def confirm_nq_markup(s, mask=NQ_DEFAULT_MASK, ip_mode='4'):
         ])
     run_text = '✅ 开始测试' if mask != NQ_ALL_MASK else '✅ 开始全测'
     rows.append([InlineKeyboardButton(run_text, callback_data=f'nqrun:{sid}:{mask}:{ip_mode}')])
-    rows.append([InlineKeyboardButton('↩️ 返回服务器详情', callback_data=f'srv:{sid}')])
+    rows.append([InlineKeyboardButton('↩️ 返回操作面板', callback_data=f'srv:{sid}')])
     return InlineKeyboardMarkup(rows)
 
 
@@ -695,10 +716,10 @@ def stream_menu_text(s):
 
 
 def stream_markup(s):
-    sid = s.get('nezha_id')
+    sid = server_id(s)
     return InlineKeyboardMarkup([
         [InlineKeyboardButton('✅ 开始流媒体检测', callback_data=f'streamrun:{sid}')],
-        [InlineKeyboardButton('↩️ 返回服务器详情', callback_data=f'srv:{sid}')],
+        [InlineKeyboardButton('↩️ 返回操作面板', callback_data=f'srv:{sid}')],
     ])
 
 
@@ -713,52 +734,26 @@ def nq_menu_text(s, mask, ip_mode):
 def menu_text():
     d = load_inventory()
     servers = d.get('servers', [])
-    online = d.get('online', '-')
-    total_traffic = sum((s.get('traffic_used') or 0) for s in servers)
     return (
-        '🥟 <b>饺管家 VPSPilot</b>\n'
-        f'在线 <b>{online}</b> / {len(servers)} 台\n'
-        f'本月流量 <b>{fmt_bytes(total_traffic)}</b>\n'
+        '🥟 <b>VPSPilot</b>\n'
+        f'服务器 <b>{len(servers)}</b> 台\n'
         f'更新 <code>{safe(d.get("updated_at"))}</code>\n\n'
-        '👇 点服务器查看详情；也可以用 <code>/addserver</code> 添加或批量导入服务器。'
+        '👇 点服务器打开操作面板。'
     )
 
 
 def server_detail_text(s):
-    st = s.get('state') or {}
-    cpu = float(st.get('cpu') or 0)
     name = safe(s.get('name'))
-    alias = ' / '.join(s.get('aliases') or [])
-    title = f"{country_flag(s.get('country'))} <b>{name}</b>" + (f"  <i>{safe(alias)}</i>" if alias else '')
-    traffic_block = '📡 <b>月流量</b>  -'
-    if s.get('traffic_max'):
-        b, p = meter(s.get('traffic_used'), s.get('traffic_max'))
-        traffic_block = (
-            f"📡 <b>月流量</b>  {p}\n"
-            f"<code>{b}</code>\n"
-            f"{fmt_bytes(s.get('traffic_used'))} / {fmt_bytes(s.get('traffic_max'))}"
-        )
-    ipv6 = s.get('ipv6') or '-'
-    cycle = ''
-    if s.get('cycle_from') or s.get('cycle_to'):
-        cycle = f"\n🗓 <b>周期</b>  <code>{safe(s.get('cycle_from'))}</code> → <code>{safe(s.get('cycle_to'))}</code>"
-    return (
-        f"{title}\n"
-        f"<code>{safe(ssh_config(s).get('host'))}</code> · SSH <code>{safe(ssh_config(s).get('port'))}</code>\n"
-        f"IPv6 <code>{safe(ipv6)}</code>\n\n"
-        f"🆔 <b>服务器 ID</b>  <code>{safe(s.get('nezha_id'))}</code>\n"
-        f"🖥 <b>系统</b>  {safe((s.get('platform') or '-') + ' ' + (s.get('platform_version') or ''))} · {safe(s.get('arch') or '-')}\n"
-        f"🔩 <b>CPU</b>  {safe(short_cpu_name(s.get('cpu')))}\n\n"
-        f"{cpu_block(cpu)}\n"
-        f"{usage_block('内存', '💾', st.get('mem_used'), s.get('mem_total'))}\n"
-        f"{usage_block('硬盘', '💽', st.get('disk_used'), s.get('disk_total'))}\n"
-        f"{traffic_block}\n\n"
-        f"⚡️ <b>实时网速</b>  ↓ {fmt_bytes(st.get('net_in_speed'))}/s · ↑ {fmt_bytes(st.get('net_out_speed'))}/s\n"
-        f"🔌 <b>连接/进程</b>  TCP {safe(st.get('tcp_conn_count'))} · UDP {safe(st.get('udp_conn_count'))} · Proc {safe(st.get('process_count'))}\n"
-        f"⏳ <b>运行</b>  {safe(fmt_duration(st.get('uptime')))}\n"
-        f"⏱ <b>活跃</b>  <code>{safe(s.get('last_active'))}</code>"
-        f"{cycle}"
-    )
+    title = f"{country_flag(s.get('country'))} <b>{name}</b>"
+    cfg = ssh_config(s)
+    lines = [
+        title,
+        f"<code>{safe(cfg.get('host'))}</code> · SSH <code>{safe(cfg.get('port'))}</code> · <code>{safe(cfg.get('user'))}</code>",
+    ]
+    ipv6 = s.get('ipv6')
+    if ipv6 and str(ipv6).strip() not in ('-', 'None'):
+        lines.append(f"IPv6 <code>{safe(ipv6)}</code>")
+    return '\n'.join(lines)
 
 
 def ssh_env_for(s):
@@ -804,7 +799,7 @@ def build_server_item(name, host, user, port, auth_kind=None, password=None, key
         'name': name,
         'host': host,
         'role': 'manual',
-        'source': 'telegram-manual',
+        'source': 'local-manual',
         'ssh': {
             'user': user or 'root',
             'port': int(port or 22),
@@ -884,13 +879,13 @@ def save_private_key(chat_id, content, filename='id_key'):
 
 
 def edit_markup(s):
-    sid = s.get('nezha_id')
+    sid = server_id(s)
     return InlineKeyboardMarkup([
         [InlineKeyboardButton('改名称', callback_data=f'editfield:{sid}:name'), InlineKeyboardButton('改主机/IP', callback_data=f'editfield:{sid}:host')],
         [InlineKeyboardButton('改端口', callback_data=f'editfield:{sid}:port'), InlineKeyboardButton('改用户', callback_data=f'editfield:{sid}:user')],
         [InlineKeyboardButton('改密钥路径', callback_data=f'editfield:{sid}:key'), InlineKeyboardButton('改密码', callback_data=f'editfield:{sid}:password')],
         [InlineKeyboardButton('改为默认密钥', callback_data=f'editdefault:{sid}')],
-        [InlineKeyboardButton('↩️ 返回服务器详情', callback_data=f'srv:{sid}')],
+        [InlineKeyboardButton('↩️ 返回操作面板', callback_data=f'srv:{sid}')],
     ])
 
 
@@ -953,7 +948,47 @@ async def finish_bulk_add(update: Update, context: ContextTypes.DEFAULT_TYPE, se
 
 
 def job_id(kind, s):
-    return f"{kind}-{s.get('nezha_id')}-{int(time.time())}"
+    return f"{kind}-{server_id(s)}-{int(time.time())}"
+
+
+def server_jobs(s):
+    sid = str(server_id(s))
+    name = str(s.get('name') or '')
+    host = str(s.get('host') or '')
+    found = []
+    for jid, j in JOBS.items():
+        j_server = str(j.get('server') or '')
+        if f'-{sid}-' in str(jid) or j_server in (name, host, sid):
+            found.append((jid, j))
+    return found
+
+
+def job_status_text(s):
+    jobs = server_jobs(s)
+    if not jobs:
+        return f'📋 <b>{safe(s.get("name"))}</b> 当前没有任务。'
+    status_icon = {'running': '⏳', 'done': '✅', 'failed': '❌'}
+    kind_name = {
+        'ipq': 'IP质量', 'nq': 'NodeQuality', 'gb5': 'GB5', 'stream': '流媒体检测',
+        'nexttrace': 'NextTrace', 'bgp': 'BGP图', 'ippure': 'IPPure图',
+    }
+    lines = [f'📋 <b>{safe(s.get("name"))}</b> 当前任务']
+    for jid, j in jobs[-10:]:
+        status = j.get('status') or '-'
+        icon = status_icon.get(status, '•')
+        kind = kind_name.get(j.get('kind'), j.get('kind') or '-')
+        extra = []
+        if j.get('target'):
+            extra.append(str(j.get('target')))
+        if j.get('selected'):
+            extra.append(str(j.get('selected')))
+        if j.get('ip_mode'):
+            extra.append(str(j.get('ip_mode')))
+        if j.get('region'):
+            extra.append(str(j.get('region')))
+        suffix = f" — {'；'.join(extra)}" if extra else ''
+        lines.append(f'{icon} <code>{safe(jid)}</code>\n   {safe(kind)} · {safe(status)}{safe(suffix)}')
+    return '\n'.join(lines)
 
 
 def extract_urls(text):
@@ -975,6 +1010,17 @@ def first_report_url(text, category=None):
         return None
     return strip_ansi(reports[0]).strip() if reports else None
 
+
+
+def geekbench_urls(text):
+    urls = []
+    seen = set()
+    for u in extract_urls(text):
+        clean = strip_ansi(u).rstrip('.,;，。)】]')
+        if re.search(r'browser\.geekbench\.com/v\d+/cpu/\d+', clean) and clean not in seen:
+            urls.append(clean)
+            seen.add(clean)
+    return urls
 
 def nodequality_url(text):
     for u in extract_urls(text):
@@ -1263,11 +1309,10 @@ async def send_png_and_cleanup(bot, chat_id, png, cleanup_dir=None):
 
 
 async def run_bgp_task(bot, chat_id, s, jid):
-    key = (s.get('nezha_id'), 'bgp')
+    key = (server_id(s), 'bgp')
     RUNNING.add(key)
     try:
         ip = s.get('host')
-        await bot.send_message(chat_id, f"🧭 {safe(s.get('name'))} BGP 图开始生成…", parse_mode=ParseMode.HTML)
         png = await generate_bgp_png(ip)
         JOBS[jid] = {'status': 'done', 'server': s.get('name'), 'kind': 'bgp', 'log': str(png)}
         await send_png_and_cleanup(bot, chat_id, png)
@@ -1279,11 +1324,10 @@ async def run_bgp_task(bot, chat_id, s, jid):
 
 
 async def run_ippure_task(bot, chat_id, s, jid):
-    key = (s.get('nezha_id'), 'ippure')
+    key = (server_id(s), 'ippure')
     RUNNING.add(key)
     try:
         ip = s.get('host')
-        await bot.send_message(chat_id, f"🧼 {safe(s.get('name'))} IPPure 图开始生成…", parse_mode=ParseMode.HTML)
         png = await generate_ippure_png(ip)
         JOBS[jid] = {'status': 'done', 'server': s.get('name'), 'kind': 'ippure', 'log': str(png)}
         await send_png_and_cleanup(bot, chat_id, png, Path(png).parent)
@@ -1352,10 +1396,9 @@ async def send_report_images(bot, chat_id, report_links, prefix):
 
 
 async def run_ip_quality_task(bot, chat_id, s, jid):
-    key = (s.get('nezha_id'), 'ipq')
+    key = (server_id(s), 'ipq')
     RUNNING.add(key)
     try:
-        await bot.send_message(chat_id, f"🧪 {safe(s.get('name'))} IP质量开始跑了，完成后直接发图。", parse_mode=ParseMode.HTML)
         remote = "export TERM=xterm-256color; cd /tmp && bash <(curl -Ls https://IP.Check.Place) -y"
         code, out, url = await run_until_report(ssh_args(s, remote, tty=False), timeout=900, env=ssh_env_for(s))
         JOBS[jid] = {'status': 'done' if code == 0 else 'failed', 'log': out, 'server': s.get('name'), 'kind': 'ipq'}
@@ -1364,7 +1407,7 @@ async def run_ip_quality_task(bot, chat_id, s, jid):
             return
         out_dir = Path('/tmp/vpspilot-results')
         out_dir.mkdir(parents=True, exist_ok=True)
-        png = out_dir / f"ipq-{s.get('nezha_id')}-{int(time.time())}.png"
+        png = out_dir / f"ipq-{server_id(s)}-{int(time.time())}.png"
         try:
             await render_checkplace_png(url, png)
             await bot.send_photo(chat_id, photo=png.open('rb'))
@@ -1410,19 +1453,14 @@ def nodequality_token(text):
 
 
 async def upload_nodequality_result_from_remote(s):
-    """Re-upload the newest preserved NodeQuality result.zip and return the fresh /r/ URL.
-
-    Some NodeQuality uploads made from the live script can produce a frontend record
-    that opens blank with "SyntaxError: The string did not match the expected pattern".
-    Re-uploading the exact preserved result.zip after the run generates a clean record
-    while keeping the Check.Place SVG reports unchanged.
-    """
+    """Re-upload exactly like official NodeQuality.sh: base64(result.zip) as raw POST body."""
     remote = r'''set -e
 z=""
 for d in $(ls -td /root/.nodequality* /tmp/.nodequality* 2>/dev/null); do
   if [ -s "$d/result.zip" ]; then z="$d/result.zip"; break; fi
 done
 [ -n "$z" ] || exit 2
+# Official NodeQuality.sh does: base64 result.zip | curl --data-binary @-
 base64 "$z" | curl -fsS -X POST --data-binary @- https://api.nodequality.com/api/v1/record
 '''
     code, out = await run_subprocess(ssh_args(s, remote, tty=False), timeout=120, env=ssh_env_for(s))
@@ -1575,10 +1613,9 @@ def gb5_result_image(s, scores, out_png):
     return out_png
 
 async def run_gb5_task(bot, chat_id, s, jid):
-    key = (s.get('nezha_id'), 'gb5')
+    key = (server_id(s), 'gb5')
     RUNNING.add(key)
     try:
-        await bot.send_message(chat_id, f"🏁 {safe(s.get('name'))} GB5 开始跑了，只跑 Geekbench 5。完成后发结果图。", parse_mode=ParseMode.HTML)
         remote = (
             "set -e; export TERM=xterm-256color; cd /root; "
             "swapfile=; cleanup(){ if [ -n \"$swapfile\" ]; then swapoff $swapfile 2>/dev/null || true; rm -f $swapfile; fi; }; trap cleanup EXIT; "
@@ -2074,10 +2111,9 @@ def format_nexttrace_output(s, target, out, code):
 
 
 async def run_nexttrace_task(bot, chat_id, s, jid, target='1.1.1.1'):
-    key = (s.get('nezha_id'), 'nexttrace')
+    key = (server_id(s), 'nexttrace')
     RUNNING.add(key)
     try:
-        await bot.send_message(chat_id, f"🛣 {safe(s.get('name'))} NextTrace 开始：<code>{safe(target)}</code>", parse_mode=ParseMode.HTML)
         qt = shlex.quote(str(target))
         trace_cmd = 'nexttrace ' + qt
         remote = (
@@ -2092,7 +2128,7 @@ async def run_nexttrace_task(bot, chat_id, s, jid, target='1.1.1.1'):
         JOBS[jid] = {'status': 'done' if code == 0 else 'failed', 'log': out, 'server': s.get('name'), 'kind': 'nexttrace', 'target': target}
         out_dir = Path('/tmp/vpspilot-results')
         out_dir.mkdir(parents=True, exist_ok=True)
-        png = out_dir / f"nexttrace-{s.get('nezha_id')}-{safe_target(target)}-{int(time.time())}.jpg"
+        png = out_dir / f"nexttrace-{server_id(s)}-{safe_target(target)}-{int(time.time())}.jpg"
         try:
             img = render_nexttrace_image(s, target, out, code, png)
         except Exception:
@@ -2113,11 +2149,10 @@ async def run_nexttrace_task(bot, chat_id, s, jid, target='1.1.1.1'):
 
 
 async def run_stream_task(bot, chat_id, s, jid):
-    key = (s.get('nezha_id'), 'stream')
+    key = (server_id(s), 'stream')
     RUNNING.add(key)
     try:
         region_id, region_label = stream_region_for_server(s)
-        await bot.send_message(chat_id, f"🎬 {safe(s.get('name'))} 流媒体检测开始：自动选择 {safe(region_label)}；优先 IPv4。", parse_mode=ParseMode.HTML)
         use_v4 = await remote_has_ipv4(s)
         proto_arg = '-M 4' if use_v4 else '-M 6'
         proto_text = 'IPv4' if use_v4 else 'IPv6（无 IPv4，自动切换）'
@@ -2134,7 +2169,7 @@ async def run_stream_task(bot, chat_id, s, jid):
         JOBS[jid] = {'status': 'done' if code == 0 else 'failed', 'log': out, 'server': s.get('name'), 'kind': 'stream', 'proto': proto_text, 'region': region_label}
         out_dir = Path('/tmp/vpspilot-results')
         out_dir.mkdir(parents=True, exist_ok=True)
-        png = out_dir / f"stream-{s.get('nezha_id')}-{int(time.time())}.jpg"
+        png = out_dir / f"stream-{server_id(s)}-{int(time.time())}.jpg"
         try:
             img = stream_result_image(s, out, proto_text, region_label, region_id, png)
         except Exception:
@@ -2158,18 +2193,18 @@ async def run_stream_task(bot, chat_id, s, jid):
 
 
 async def run_nq_task(bot, chat_id, s, jid, mask=NQ_ALL_MASK, ip_mode='4'):
-    key = (s.get('nezha_id'), 'nq')
+    key = (server_id(s), 'nq')
     RUNNING.add(key)
     try:
         selected_text = nq_selected_text(mask)
         ip_text = nq_ip_mode_text(ip_mode)
-        await bot.send_message(chat_id, f"📊 {safe(s.get('name'))} NodeQuality 开始跑：{safe(selected_text)}；{safe(ip_text)}。跑完自动发链接。", parse_mode=ParseMode.HTML)
         answers = nq_answer_script(mask)
         ipv_arg = nq_remote_ipv_arg(s, ip_mode)
         remote = "export TERM=xterm-256color; cd /root && script=$(mktemp /root/nodequality.XXXXXX.sh); curl -sL https://run.NodeQuality.com > $script; sed -i 's#rm -rf \"${work_dir}\"/#: # rm -rf \"${work_dir}\"/#' $script; printf %b " + shlex.quote(answers) + " | bash $script " + ipv_arg
         code, out = await run_subprocess(ssh_args(s, remote, tty=False), timeout=7200, env=ssh_env_for(s))
         JOBS[jid] = {'status': 'done' if code == 0 else 'failed', 'log': out, 'server': s.get('name'), 'kind': 'nq', 'selected': selected_text, 'ip_mode': ip_text}
         nq = nodequality_url(out)
+        gb_urls = geekbench_urls(out)
         fixed_nq = None
         if nq:
             try:
@@ -2191,13 +2226,15 @@ async def run_nq_task(bot, chat_id, s, jid, mask=NQ_ALL_MASK, ip_mode='4'):
         image_error = ''
         if report_links:
             try:
-                await send_report_images(bot, chat_id, report_links, f"nq-{s.get('nezha_id')}")
+                await send_report_images(bot, chat_id, report_links, f"nq-{server_id(s)}")
                 image_ok = True
             except Exception as e:
                 image_error = str(e)
         msg = f"✅ {safe(s.get('name'))} NodeQuality 完成：{safe(selected_text)}；{safe(ip_text)}"
         if nq:
             msg += f"\n\nNodeQuality:\n{safe(nq)}"
+        if gb_urls:
+            msg += "\n\nGeekbench:\n" + "\n".join(safe(u) for u in gb_urls)
             if not image_ok:
                 token = nodequality_token(nq)
                 api = f"https://api.nodequality.com/api/v1/record/{token}" if token else None
@@ -2256,13 +2293,6 @@ async def info_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text('没找到这台。')
         return
     await update.message.reply_text(server_detail_text(s), parse_mode=ParseMode.HTML, reply_markup=server_markup(s))
-
-
-async def health_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await guard(update): return
-    msg = await update.message.reply_text('🩺 开始只读巡检，稍等…')
-    code, out = await run_cmd(['python', '/app/vpspilot.py', 'health'], timeout=180)
-    await msg.edit_text(f'<pre>{safe((out or "无输出")[-3500:])}</pre>', parse_mode=ParseMode.HTML)
 
 
 async def export_config_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2470,14 +2500,14 @@ async def fallback_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not target:
             await update.message.reply_text('没识别到 IP 或域名，已取消这次 NextTrace。')
             return
-        key = (s.get('nezha_id'), 'nexttrace')
+        key = (server_id(s), 'nexttrace')
         if key in RUNNING:
             await update.message.reply_text('这台 NextTrace 已经在跑了。')
             return
         jid = job_id('nexttrace', s)
         JOBS[jid] = {'status': 'running', 'server': s.get('name'), 'kind': 'nexttrace', 'target': target}
+        await send_running_notice(context.bot, chat_id, s, f'NextTrace {safe(target)}')
         asyncio.create_task(run_nexttrace_task(context.bot, chat_id, s, jid, target))
-        await update.message.reply_text(f'🛣 已启动 {safe(s.get("name"))} NextTrace：<code>{safe(target)}</code>', parse_mode=ParseMode.HTML)
         return
     # 普通文本不再触发任何功能；只有点击 NextTrace 后的下一条 IP/域名才会被消费。
     return
@@ -2485,15 +2515,14 @@ async def fallback_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def post_init(app: Application):
     commands = [
-        BotCommand('start', '打开饺管家面板'),
+        BotCommand('start', '打开 VPSPilot 面板'),
         BotCommand('list', '服务器列表'),
         BotCommand('status', '总览状态'),
         BotCommand('addserver', '添加/批量导入服务器'),
         BotCommand('testssh', '测试服务器 SSH'),
         BotCommand('testall', '批量测试 SSH'),
         BotCommand('exportconfig', '导出脱敏配置'),
-        BotCommand('info', '查看单台详情：/info 名字/IP/ID'),
-        BotCommand('health', '只读巡检'),
+        BotCommand('info', '查看单台操作面板：/info 名字/IP/ID'),
         BotCommand('jobs', '查看后台任务'),
         BotCommand('ip', 'IP/域名工具：/ip 1.1.1.1'),
         BotCommand('nexttrace', '路由追踪：/nexttrace 服务器 目标'),
@@ -2530,7 +2559,7 @@ async def nexttrace_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (extract_ipv4(target) or normalize_domain(target)):
         await update.message.reply_text('目标需要是 IPv4 或域名。')
         return
-    key = (s.get('nezha_id'), 'nexttrace')
+    key = (server_id(s), 'nexttrace')
     if key in RUNNING:
         await update.message.reply_text('这台 NextTrace 已经在跑了。')
         return
@@ -2595,7 +2624,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text('请发送已有 SSH 私钥路径，例如：\n<code>/data/keys/id_ed25519</code>\n\n适合新服务器继续使用以前同一把密钥。', parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('❌ 取消', callback_data='add:cancel')]]))
     elif data == 'addauth:key':
         add_session(chat_id, step='single_key_text')
-        await q.edit_message_text('请直接发送 SSH 私钥文本，或以文件形式上传私钥。\n\n需要包含 <code>-----BEGIN ... PRIVATE KEY-----</code>。', parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('❌ 取消', callback_data='add:cancel')]]))
+        await q.edit_message_text('请直接发送 SSH 私钥文本，或以文件形式上传私钥。\n\n需要包含 SSH 私钥的 BEGIN/END 头尾标记。', parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('❌ 取消', callback_data='add:cancel')]]))
     elif data == 'addauth:password':
         add_session(chat_id, step='single_password')
         await q.edit_message_text('请发送这台服务器的 SSH 密码。', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('❌ 取消', callback_data='add:cancel')]]))
@@ -2630,10 +2659,6 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.answer('该功能未启用', show_alert=True)
     elif data == 'act:list':
         await send_or_edit(update, menu_text(), main_menu_markup())
-    elif data == 'act:health':
-        await q.edit_message_text('🩺 开始只读巡检，稍等…')
-        code, out = await run_cmd(['python', '/app/vpspilot.py', 'health'], timeout=180)
-        await q.edit_message_text(f'<pre>{safe((out or "无输出")[-3500:])}</pre>', parse_mode=ParseMode.HTML, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回列表', callback_data='act:list')]]))
     elif data.startswith('edit:'):
         if not await admin_guard(update): return
         sid = data.split(':', 1)[1]
@@ -2665,6 +2690,20 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=main_menu_markup())
             return
         await q.edit_message_text(f'已改为沿用默认密钥：<b>{safe(updated.get("name"))}</b>', parse_mode=ParseMode.HTML, reply_markup=server_markup(updated))
+    elif data.startswith('jobsrv:'):
+        sid = data.split(':', 1)[1]
+        s = find_server_by_id(sid)
+        if not s:
+            await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回列表', callback_data='act:list')]]))
+            return
+        await q.edit_message_text(
+            job_status_text(s),
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton('🔄 刷新任务', callback_data=f'jobsrv:{sid}')],
+                [InlineKeyboardButton('↩️ 返回操作面板', callback_data=f'srv:{sid}')],
+            ]),
+        )
     elif data.startswith('testssh:'):
         if not await admin_guard(update): return
         sid = data.split(':', 1)[1]
@@ -2686,12 +2725,16 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not s:
             await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回列表', callback_data='act:list')]]))
             return
+        cfg = ssh_config(s)
         await q.edit_message_text(
-            f'确认删除服务器 <b>{safe(s.get("name"))}</b> 吗？\n只会从 VPSPilot 配置删除，不会动远端机器。',
+            '⚠️ 确认删除这台服务器？\n\n'
+            f'<b>{safe(s.get("name"))}</b>\n'
+            f'<code>{safe(cfg.get("user"))}@{safe(cfg.get("host"))}:{safe(cfg.get("port"))}</code>\n\n'
+            '只会从 VPSPilot 配置删除，不会动远端机器。',
             parse_mode=ParseMode.HTML,
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton('✅ 确认删除', callback_data=f'delconfirm:{sid}')],
-                [InlineKeyboardButton('↩️ 返回服务器详情', callback_data=f'srv:{sid}')],
+                [InlineKeyboardButton('❌ 取消删除', callback_data=f'srv:{sid}')],
             ]),
         )
     elif data.startswith('delconfirm:'):
@@ -2708,43 +2751,43 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not s:
             await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回列表', callback_data='act:list')]]))
             return
-        key = (s.get('nezha_id'), 'ipq')
+        key = (server_id(s), 'ipq')
         if key in RUNNING:
             await q.answer('这台 IP质量已经在跑了', show_alert=True)
             return
         jid = job_id('ipq', s)
         JOBS[jid] = {'status': 'running', 'server': s.get('name'), 'kind': 'ipq'}
+        await send_running_notice(context.bot, q.message.chat_id, s, 'IP质量任务')
         asyncio.create_task(run_ip_quality_task(context.bot, q.message.chat_id, s, jid))
-        await q.edit_message_text(f'🧪 已启动 {safe(s.get("name"))} IP质量任务。完成后会自动发图。', parse_mode=ParseMode.HTML, reply_markup=server_markup(s))
     elif data.startswith('gb5:'):
         sid = data.split(':', 1)[1]
         s = find_server_by_id(sid)
         if not s:
             await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回列表', callback_data='act:list')]]))
             return
-        key = (s.get('nezha_id'), 'gb5')
+        key = (server_id(s), 'gb5')
         if key in RUNNING:
             await q.answer('这台 GB5 已经在跑了', show_alert=True)
             return
         jid = job_id('gb5', s)
         JOBS[jid] = {'status': 'running', 'server': s.get('name'), 'kind': 'gb5'}
+        await send_running_notice(context.bot, q.message.chat_id, s, 'GB5')
         asyncio.create_task(run_gb5_task(context.bot, q.message.chat_id, s, jid))
-        await q.edit_message_text(f'🏁 已启动 {safe(s.get("name"))} GB5。跑完会自动发结果图。', parse_mode=ParseMode.HTML, reply_markup=server_markup(s))
     elif data.startswith('stream:') or data.startswith('streamrun:'):
         sid = data.split(':', 1)[1]
         s = find_server_by_id(sid)
         if not s:
             await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回列表', callback_data='act:list')]]))
             return
-        key = (s.get('nezha_id'), 'stream')
+        key = (server_id(s), 'stream')
         if key in RUNNING:
             await q.answer('这台流媒体检测已经在跑了', show_alert=True)
             return
         jid = job_id('stream', s)
         region_id, region_label = stream_region_for_server(s)
         JOBS[jid] = {'status': 'running', 'server': s.get('name'), 'kind': 'stream', 'region': region_label}
+        await send_running_notice(context.bot, q.message.chat_id, s, f'流媒体检测（{safe(region_label)}）')
         asyncio.create_task(run_stream_task(context.bot, q.message.chat_id, s, jid))
-        await q.edit_message_text(f'🎬 已启动 {safe(s.get("name"))} 流媒体检测：{safe(region_label)}。跑完会自动发结果图。', parse_mode=ParseMode.HTML, reply_markup=server_markup(s))
     elif data.startswith('ntask:'):
         sid = data.split(':', 1)[1]
         s = find_server_by_id(sid)
@@ -2755,7 +2798,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(
             nexttrace_prompt_text(s),
             parse_mode=ParseMode.HTML,
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回服务器详情', callback_data=f'srv:{sid}')]])
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回操作面板', callback_data=f'srv:{sid}')]])
         )
     elif data.startswith('ntrun:'):
         parts = data.split(':', 2)
@@ -2765,62 +2808,62 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not s:
             await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回列表', callback_data='act:list')]]))
             return
-        key = (s.get('nezha_id'), 'nexttrace')
+        key = (server_id(s), 'nexttrace')
         if key in RUNNING:
             await q.answer('这台 NextTrace 已经在跑了', show_alert=True)
             return
         jid = job_id('nexttrace', s)
         JOBS[jid] = {'status': 'running', 'server': s.get('name'), 'kind': 'nexttrace', 'target': target}
+        await send_running_notice(context.bot, q.message.chat_id, s, f'NextTrace {safe(target)}')
         asyncio.create_task(run_nexttrace_task(context.bot, q.message.chat_id, s, jid, target))
-        await q.edit_message_text(f'🛣 已启动 {safe(s.get("name"))} NextTrace：<code>{safe(target)}</code>。完成后会自动发结果。', parse_mode=ParseMode.HTML, reply_markup=server_markup(s))
     elif data.startswith('bgp:'):
         sid = data.split(':', 1)[1]
         s = find_server_by_id(sid)
         if not s:
             await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回列表', callback_data='act:list')]]))
             return
-        key = (s.get('nezha_id'), 'bgp')
+        key = (server_id(s), 'bgp')
         if key in RUNNING:
             await q.answer('这台 BGP 图已经在生成了', show_alert=True)
             return
         jid = job_id('bgp', s)
         JOBS[jid] = {'status': 'running', 'server': s.get('name'), 'kind': 'bgp'}
+        await send_running_notice(context.bot, q.message.chat_id, s, 'BGP 图任务')
         asyncio.create_task(run_bgp_task(context.bot, q.message.chat_id, s, jid))
-        await q.edit_message_text(f'🧭 已启动 {safe(s.get("name"))} BGP 图任务。完成后会自动发图。', parse_mode=ParseMode.HTML, reply_markup=server_markup(s))
     elif data.startswith('ippure:'):
         sid = data.split(':', 1)[1]
         s = find_server_by_id(sid)
         if not s:
             await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回列表', callback_data='act:list')]]))
             return
-        key = (s.get('nezha_id'), 'ippure')
+        key = (server_id(s), 'ippure')
         if key in RUNNING:
             await q.answer('这台 IPPure 图已经在生成了', show_alert=True)
             return
         jid = job_id('ippure', s)
         JOBS[jid] = {'status': 'running', 'server': s.get('name'), 'kind': 'ippure'}
+        await send_running_notice(context.bot, q.message.chat_id, s, 'IPPure 图任务')
         asyncio.create_task(run_ippure_task(context.bot, q.message.chat_id, s, jid))
-        await q.edit_message_text(f'🧼 已启动 {safe(s.get("name"))} IPPure 图任务。完成后会自动发图。', parse_mode=ParseMode.HTML, reply_markup=server_markup(s))
     elif data.startswith('bgpip:'):
         ip = data.split(':', 1)[1]
         if not is_ipv4(ip):
             await q.answer('无效 IPv4', show_alert=True)
             return
-        pseudo = {'nezha_id': ip, 'name': ip, 'host': ip}
+        pseudo = {'id': ip, 'name': ip, 'host': ip}
         jid = job_id('bgp', pseudo)
         JOBS[jid] = {'status': 'running', 'server': ip, 'kind': 'bgp'}
+        await send_running_notice(context.bot, q.message.chat_id, pseudo, 'BGP 图任务')
         asyncio.create_task(run_bgp_task(context.bot, q.message.chat_id, pseudo, jid))
-        await q.edit_message_text(f'🧭 已启动 <code>{safe(ip)}</code> BGP 图任务。完成后会自动发图。', parse_mode=ParseMode.HTML)
     elif data.startswith('ippureip:'):
         ip = data.split(':', 1)[1]
         if not is_ipv4(ip):
             await q.answer('无效 IPv4', show_alert=True)
             return
-        pseudo = {'nezha_id': ip, 'name': ip, 'host': ip}
+        pseudo = {'id': ip, 'name': ip, 'host': ip}
         jid = job_id('ippure', pseudo)
         JOBS[jid] = {'status': 'running', 'server': ip, 'kind': 'ippure'}
+        await send_running_notice(context.bot, q.message.chat_id, pseudo, 'IPPure 图任务')
         asyncio.create_task(run_ippure_task(context.bot, q.message.chat_id, pseudo, jid))
-        await q.edit_message_text(f'🧼 已启动 <code>{safe(ip)}</code> IPPure 图任务。完成后会自动发图。', parse_mode=ParseMode.HTML)
     elif data.startswith('nqask:'):
         sid = data.split(':', 1)[1]
         s = find_server_by_id(sid)
@@ -2869,7 +2912,7 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode=ParseMode.HTML, reply_markup=confirm_nq_markup(s, mask, ip_mode)
             )
             return
-        key = (s.get('nezha_id'), 'nq')
+        key = (server_id(s), 'nq')
         if key in RUNNING:
             await q.answer('这台 NQ 已经在跑了', show_alert=True)
             return
@@ -2879,9 +2922,9 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         selected_text = nq_selected_text(mask)
         ip_text = nq_ip_mode_text(ip_mode)
         JOBS[jid] = {'status': 'running', 'server': s.get('name'), 'kind': 'nq', 'selected': selected_text, 'ip_mode': ip_text}
+        await send_running_notice(context.bot, q.message.chat_id, s, f'NodeQuality（{safe(selected_text)}；{safe(ip_text)}）')
         asyncio.create_task(run_nq_task(context.bot, q.message.chat_id, s, jid, mask, ip_mode))
-        await q.edit_message_text(f'📊 已启动 {safe(s.get("name"))} NodeQuality：{safe(selected_text)}；{safe(ip_text)}。跑完会自动发结果链接。', parse_mode=ParseMode.HTML, reply_markup=server_markup(s))
-    elif data.startswith('srv:') or data.startswith('refresh:'):
+    elif data.startswith('srv:'):
         sid = data.split(':', 1)[1]
         s = find_server_by_id(sid)
         if not s:
@@ -2905,7 +2948,6 @@ def main():
     app.add_handler(CommandHandler('testall', testall_cmd))
     app.add_handler(CommandHandler('exportconfig', export_config_cmd))
     app.add_handler(CommandHandler('info', info_cmd))
-    app.add_handler(CommandHandler('health', health_cmd))
     app.add_handler(CommandHandler('jobs', jobs_cmd))
     app.add_handler(CommandHandler('ip', ip_cmd))
     app.add_handler(CommandHandler('nexttrace', nexttrace_cmd))
