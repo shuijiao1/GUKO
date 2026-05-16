@@ -19,7 +19,6 @@
 - **灵活 SSH 鉴权**：支持默认密钥继承、每台独立密钥、已有密钥路径、上传 / 粘贴私钥、密码登录。
 - **常用测试入口**：支持 IP 质量、NodeQuality、流媒体解锁、NextTrace、GB5 等任务。
 - **IP / 域名工具**：支持 IPPure 官方图片与 bgp.tools BGP 路由图。
-- **安全默认值**：必须配置白名单；远程命令执行默认关闭，需要显式开启。
 - **适合 Docker 部署**：提供 Docker Compose、Makefile 和初始化脚本。
 
 ---
@@ -53,7 +52,6 @@ KEYS_DIR=/data/keys
 GUKO_DEFAULT_USER=root
 GUKO_DEFAULT_PORT=22
 GUKO_DEFAULT_KEY=/data/keys/id_ed25519
-ENABLE_REMOTE_RUN=false
 ENABLE_BGP=true
 ENABLE_IPPURE=true
 ENABLE_IPQ=true
@@ -213,7 +211,6 @@ jp-01 203.0.113.20 2222 debian password:your-password
 - `/jobs` — 查看后台任务
 - `/ip <IPv4 或域名>` — IPPure / BGP 工具
 - `/nexttrace <服务器> <目标>` — 路由追踪
-- `/run <服务器> <命令>` — 远程执行命令，仅 `ENABLE_REMOTE_RUN=true` 时启用
 
 ---
 
@@ -233,7 +230,6 @@ KEYS_DIR=/data/keys
 GUKO_DEFAULT_USER=root
 GUKO_DEFAULT_PORT=22
 GUKO_DEFAULT_KEY=/data/keys/id_ed25519
-ENABLE_REMOTE_RUN=false
 ENABLE_BGP=true
 ENABLE_IPPURE=true
 ENABLE_IPQ=true
@@ -257,7 +253,6 @@ ALLOW_INSECURE_STARTUP=false
 | `GUKO_DEFAULT_USER` | 否 | `root` | 默认 SSH 用户 |
 | `GUKO_DEFAULT_PORT` | 否 | `22` | 默认 SSH 端口 |
 | `GUKO_DEFAULT_KEY` | 否 | `/data/keys/id_ed25519` | 默认 SSH 私钥路径 |
-| `ENABLE_REMOTE_RUN` | 否 | `false` | 是否启用 `/run` 远程执行命令 |
 | `ENABLE_BGP` | 否 | `true` | 是否启用 BGP 图功能 |
 | `ENABLE_IPPURE` | 否 | `true` | 是否启用 IPPure 图功能 |
 | `ENABLE_IPQ` | 否 | `true` | 是否启用 IP 质量功能 |
@@ -418,7 +413,6 @@ make check
 - 仓库不包含任何 Bot Token、真实用户 ID、服务器密码或私钥。
 - `.env`、`servers.json`、`keys/`、`media/`、`tmp/` 已加入 `.gitignore`，不要提交真实配置。
 - 默认白名单模式，未配置允许用户时会拒绝启动。
-- 远程命令执行默认关闭；如需使用 `/run`，需要显式设置 `ENABLE_REMOTE_RUN=true`。
 - 使用 IPPure、bgp.tools、NodeQuality、流媒体检测等功能时，会访问对应第三方服务。
 - 删除服务器只会删除 Bot 本地配置，不会删除或重装远端机器。
 

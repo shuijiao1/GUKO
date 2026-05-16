@@ -53,7 +53,6 @@ KEYS_DIR=/data/keys
 GUKO_DEFAULT_USER=root
 GUKO_DEFAULT_PORT=22
 GUKO_DEFAULT_KEY=/data/keys/id_ed25519
-ENABLE_REMOTE_RUN=false
 ENABLE_BGP=true
 ENABLE_IPPURE=true
 ENABLE_IPQ=true
@@ -213,7 +212,6 @@ jp-01 203.0.113.20 2222 debian password:your-password
 - `/jobs` — Show background jobs
 - `/ip <IPv4 or domain>` — IPPure / BGP tools
 - `/nexttrace <server> <target>` — Route tracing
-- `/run <server> <command>` — Remote command execution, only available when `ENABLE_REMOTE_RUN=true`
 
 ---
 
@@ -233,7 +231,6 @@ KEYS_DIR=/data/keys
 GUKO_DEFAULT_USER=root
 GUKO_DEFAULT_PORT=22
 GUKO_DEFAULT_KEY=/data/keys/id_ed25519
-ENABLE_REMOTE_RUN=false
 ENABLE_BGP=true
 ENABLE_IPPURE=true
 ENABLE_IPQ=true
@@ -257,7 +254,6 @@ ALLOW_INSECURE_STARTUP=false
 | `GUKO_DEFAULT_USER` | No | `root` | Default SSH user |
 | `GUKO_DEFAULT_PORT` | No | `22` | Default SSH port |
 | `GUKO_DEFAULT_KEY` | No | `/data/keys/id_ed25519` | Default SSH private key path |
-| `ENABLE_REMOTE_RUN` | No | `false` | Enable `/run` remote command execution |
 | `ENABLE_BGP` | No | `true` | Enable BGP image feature |
 | `ENABLE_IPPURE` | No | `true` | Enable IPPure image feature |
 | `ENABLE_IPQ` | No | `true` | Enable IP quality feature |
@@ -418,7 +414,6 @@ make check
 - The repository does not contain any Bot Token, real user ID, server password, or private key.
 - `.env`, `servers.json`, `keys/`, `media/`, and `tmp/` are ignored by Git. Do not commit real configuration.
 - Whitelist mode is enabled by default. The Bot refuses to start when allowed users are not configured.
-- Remote command execution is disabled by default. To use `/run`, explicitly set `ENABLE_REMOTE_RUN=true`.
 - IPPure, bgp.tools, NodeQuality, streaming checks, and similar features will access corresponding third-party services.
 - Deleting a server only removes local Bot configuration. It does not delete or reinstall the remote machine.
 

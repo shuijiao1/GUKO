@@ -41,7 +41,6 @@ IPPURE_TMP_ROOT = Path(os.environ.get('IPPURE_TMP_ROOT', TMP_DIR / 'guko-ippure'
 BOT_TOKEN = os.environ.get('BOT_TOKEN', '').strip()
 ALLOWED_USERS = {x.strip() for x in os.environ.get('ALLOWED_USERS', '').split(',') if x.strip()}
 ADMIN_USERS = {x.strip() for x in os.environ.get('ADMIN_USERS', '').split(',') if x.strip()} or set(ALLOWED_USERS)
-ENABLE_REMOTE_RUN = os.environ.get('ENABLE_REMOTE_RUN', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 ALLOW_INSECURE_STARTUP = os.environ.get('ALLOW_INSECURE_STARTUP', 'false').strip().lower() in ('1', 'true', 'yes', 'on')
 SCRIPT_SOURCES = {
     'nexttrace': ('NextTrace', 'https://github.com/nxtrace/NTrace-core'),
@@ -2556,8 +2555,6 @@ async def post_init(app: Application):
         BotCommand('ip', 'IP/域名工具：/ip 1.1.1.1'),
         BotCommand('nexttrace', '路由追踪：/nexttrace 服务器 目标'),
     ]
-    if ENABLE_REMOTE_RUN:
-        commands.append(BotCommand('run', '远程执行命令'))
     await app.bot.set_my_commands(commands)
 
 
@@ -2596,20 +2593,6 @@ async def nexttrace_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     JOBS[jid] = {'status': 'running', 'server': s.get('name'), 'kind': 'nexttrace', 'target': target}
     asyncio.create_task(run_nexttrace_task(context.bot, update.effective_chat.id, s, jid, target))
     await update.message.reply_text(f'🛣 已启动 {safe(s.get("name"))} NextTrace：{safe(target)}', parse_mode=ParseMode.HTML)
-
-
-async def run_remote(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await admin_guard(update): return
-    if not ENABLE_REMOTE_RUN:
-        await update.message.reply_text('远程命令默认关闭。需要在 .env 设置 ENABLE_REMOTE_RUN=true 后才可使用。')
-        return
-    if len(context.args) < 2:
-        await update.message.reply_text('用法：/run <名字/IP/ID/别名> <命令>')
-        return
-    target, cmd = context.args[0], context.args[1:]
-    msg = await update.message.reply_text(f'执行中：{target}')
-    code, out = await run_cmd(['python', '/app/guko.py', 'run', target, *cmd], timeout=120)
-    await msg.edit_text(f'<pre>{safe((out or f"退出码 {code}")[-3500:])}</pre>', parse_mode=ParseMode.HTML)
 
 
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2980,7 +2963,6 @@ def main():
     app.add_handler(CommandHandler('jobs', jobs_cmd))
     app.add_handler(CommandHandler('ip', ip_cmd))
     app.add_handler(CommandHandler('nexttrace', nexttrace_cmd))
-    app.add_handler(CommandHandler('run', run_remote))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_panel))
