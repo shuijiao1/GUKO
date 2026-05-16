@@ -765,9 +765,8 @@ def menu_text():
     d = load_inventory()
     servers = d.get('servers', [])
     return (
-        '🥟 <b>VPSPilot</b>\n'
-        f'服务器 <b>{len(servers)}</b> 台\n'
-        f'更新 <code>{safe(d.get("updated_at"))}</code>\n\n'
+        '<b>VPSPilot</b>\n'
+        f'服务器 <b>{len(servers)}</b> 台\n\n'
         '👇 点服务器打开操作面板。'
     )
 
