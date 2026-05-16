@@ -98,10 +98,19 @@ After startup, send `/addserver` to the Bot to add your first server.
 ```bash
 git clone https://github.com/shuijiao1/VPSPilot.git
 cd VPSPilot
-./install.sh
+cp .env.example .env
+cp servers.example.json servers.json
+mkdir -p keys media tmp
 nano .env
-docker compose -f docker-compose.example.yml up -d --build
-docker compose -f docker-compose.example.yml logs -f
+docker build -f telegram-bot/Dockerfile -t vpspilot:local .
+docker run -d --name vpspilot-bot --restart unless-stopped \
+  --env-file .env \
+  -v ./servers.json:/data/servers.json \
+  -v ./keys:/data/keys \
+  -v ./media:/data/media \
+  -v ./tmp:/data/tmp \
+  vpspilot:local
+docker logs -f vpspilot-bot
 ```
 
 ---

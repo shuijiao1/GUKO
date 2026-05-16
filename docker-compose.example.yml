@@ -1,8 +1,6 @@
 services:
   vpspilot-bot:
-    build:
-      context: .
-      dockerfile: telegram-bot/Dockerfile
+    image: ghcr.io/shuijiao1/vpspilot:latest
     container_name: vpspilot-bot
     restart: unless-stopped
     env_file: .env

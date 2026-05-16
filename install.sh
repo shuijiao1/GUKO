@@ -11,6 +11,6 @@ VPSPilot initialized.
 Next steps:
 1. Create your own Telegram bot with BotFather.
 2. Edit .env and set BOT_TOKEN, ALLOWED_USERS, ADMIN_USERS.
-3. Start: docker compose -f docker-compose.example.yml up -d --build
+3. Start: docker compose up -d
 4. In Telegram, send /addserver to add your first server.
 MSG
