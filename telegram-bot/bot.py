@@ -55,7 +55,8 @@ RUNNING = set()
 PENDING_NEXTTRACE = {}
 ADD_SESSIONS = {}
 HISTORY_JSON = Path(os.environ.get('HISTORY_JSON', DATA_DIR / 'history.json'))
-HISTORY_LIMIT = int(os.environ.get('HISTORY_LIMIT', '200'))
+# Each server/test kind only keeps the latest finished result; this stays intentionally small.
+HISTORY_LIMIT = int(os.environ.get('HISTORY_LIMIT', '500'))
 
 
 def startup_check():
@@ -1024,7 +1025,13 @@ def history_append(jid, job):
         'duration_sec': job.get('duration_sec'),
         'urls': extract_urls(job.get('log') or '')[:8],
     }
-    hist = [x for x in load_history() if x.get('job_id') != jid]
+    hist = [
+        x for x in load_history()
+        if not (
+            x.get('job_id') == jid
+            or (str(x.get('server_id') or '') == str(item.get('server_id') or '') and x.get('kind') == item.get('kind'))
+        )
+    ]
     hist.append(item)
     save_history(hist)
 
@@ -1064,7 +1071,7 @@ def finish_job(jid, key=None):
         RUNNING.discard(key)
 
 
-def server_history(s, limit=10):
+def server_history(s, limit=20):
     sid = str(server_id(s))
     name = str(s.get('name') or '')
     host = str(s.get('host') or '')
@@ -1076,10 +1083,10 @@ def server_history(s, limit=10):
 
 
 def history_text(s):
-    items = server_history(s, 10)
+    items = server_history(s, 20)
     if not items:
         return f'📜 <b>{safe(s.get("name"))}</b> 暂无测试历史。'
-    lines = [f'📜 <b>{safe(s.get("name"))}</b> 最近测试历史']
+    lines = [f'📜 <b>{safe(s.get("name"))}</b> 最近一次测试结果']
     for item in reversed(items):
         icon = STATUS_ICON.get(item.get('status'), '•')
         kind = KIND_NAME.get(item.get('kind'), item.get('kind') or '-')
