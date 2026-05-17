@@ -28,6 +28,7 @@ from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
+GUKO_VERSION = os.environ.get('GUKO_VERSION', '0.1.0').strip() or '0.1.0'
 DATA_DIR = Path(os.environ.get('DATA_DIR', '/data'))
 SERVERS_JSON = Path(os.environ.get('GUKO_INV') or os.environ.get('VPSPILOT_INV') or DATA_DIR / 'servers.json')
 MEDIA_DIR = Path(os.environ.get('MEDIA_DIR', DATA_DIR / 'media'))
@@ -778,7 +779,7 @@ def menu_text():
     d = load_inventory()
     servers = d.get('servers', [])
     return (
-        '<b>GUKO</b>\n'
+        f'<b>GUKO</b> <code>v{safe(GUKO_VERSION)}</code>\n'
         f'服务器 <b>{len(servers)}</b> 台\n\n'
         '👇 点服务器打开操作面板。'
     )
@@ -2682,6 +2683,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await send_or_edit(update, menu_text(), main_menu_markup())
 
 
+async def version_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await guard(update): return
+    await update.message.reply_text(f'GUKO v{GUKO_VERSION}')
+
+
 async def list_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await guard(update): return
     await send_or_edit(update, menu_text(), main_menu_markup())
@@ -2948,6 +2954,7 @@ async def post_init(app: Application):
         BotCommand('history', '查看测试历史：/history 服务器'),
         BotCommand('ip', 'IP/域名工具：/ip 1.1.1.1'),
         BotCommand('nexttrace', '路由追踪：/nexttrace 服务器 目标'),
+        BotCommand('version', '查看 GUKO 版本'),
     ]
     await app.bot.set_my_commands(commands)
 
@@ -3347,6 +3354,7 @@ def main():
     startup_check()
     app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler(['start', 'help'], start))
+    app.add_handler(CommandHandler('version', version_cmd))
     app.add_handler(CommandHandler('list', list_cmd))
     app.add_handler(CommandHandler('status', status_cmd))
     app.add_handler(CommandHandler('addserver', addserver_cmd))
@@ -3362,7 +3370,7 @@ def main():
     app.add_handler(MessageHandler(filters.Document.ALL, document_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, fallback_panel))
     app.add_error_handler(error_handler)
-    print('guko telegram bot started', flush=True)
+    print(f'guko telegram bot started v{GUKO_VERSION}', flush=True)
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
