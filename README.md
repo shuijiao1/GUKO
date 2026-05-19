@@ -389,9 +389,9 @@ Bot 内还可以导出脱敏配置：
 
 ## ⚙️ 版本与发布
 
-- 当前版本：`v0.1.3`
+- 当前版本：`v0.1.4`
 - 更新记录见 [`CHANGELOG.md`](CHANGELOG.md)
-- Docker 镜像会发布 `latest`、`v0.1.3` 和 commit sha 标签
+- Docker 镜像会发布 `latest`、`v0.1.4` 和 commit sha 标签
 - GitHub Release 会根据 `CHANGELOG.md` 自动生成说明
 - 维护者发布新版本可使用：
 
