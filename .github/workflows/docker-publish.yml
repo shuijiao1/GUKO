@@ -3,6 +3,8 @@ name: Publish Docker image
 on:
   push:
     branches: [main]
+    tags:
+      - 'v*.*.*'
   workflow_dispatch:
 
 permissions:
@@ -17,8 +19,23 @@ jobs:
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Build image
-        run: docker build -f telegram-bot/Dockerfile -t ghcr.io/${{ github.repository_owner }}/guko:latest -t ghcr.io/${{ github.repository_owner }}/guko:${{ github.sha }} .
+        run: |
+          IMAGE=ghcr.io/${{ github.repository_owner }}/guko
+          TAGS="-t $IMAGE:${{ github.sha }}"
+          if [ "${{ github.ref_type }}" = "branch" ] && [ "${{ github.ref_name }}" = "main" ]; then
+            TAGS="$TAGS -t $IMAGE:latest"
+          fi
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            TAGS="$TAGS -t $IMAGE:${{ github.ref_name }}"
+          fi
+          docker build -f telegram-bot/Dockerfile $TAGS .
       - name: Push image
         run: |
-          docker push ghcr.io/${{ github.repository_owner }}/guko:latest
-          docker push ghcr.io/${{ github.repository_owner }}/guko:${{ github.sha }}
+          IMAGE=ghcr.io/${{ github.repository_owner }}/guko
+          docker push "$IMAGE:${{ github.sha }}"
+          if [ "${{ github.ref_type }}" = "branch" ] && [ "${{ github.ref_name }}" = "main" ]; then
+            docker push "$IMAGE:latest"
+          fi
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            docker push "$IMAGE:${{ github.ref_name }}"
+          fi
