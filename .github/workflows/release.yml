@@ -51,8 +51,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${{ steps.vars.outputs.tag }}"
+          assets=(docker-compose.example.yml .env.example)
+          existing=()
+          for asset in "${assets[@]}"; do
+            [ -f "$asset" ] && existing+=("$asset")
+          done
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release edit "$tag" --title "$tag" --notes-file /tmp/release-notes.md
+            if [ ${#existing[@]} -gt 0 ]; then
+              gh release upload "$tag" "${existing[@]}" --clobber
+            fi
           else
-            gh release create "$tag" --title "$tag" --notes-file /tmp/release-notes.md
+            gh release create "$tag" "${existing[@]}" --title "$tag" --notes-file /tmp/release-notes.md
           fi
