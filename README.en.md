@@ -39,7 +39,7 @@ Two deployment methods are available. **Docker Compose is recommended**.
 mkdir -p guko/keys guko/media guko/tmp
 cd guko
 
-curl -Lo docker-compose.yml https://raw.githubusercontent.com/shuijiao1/GUKO/main/docker-compose.example.yml
+curl -Lo docker-compose.yml https://github.com/shuijiao1/GUKO/releases/latest/download/docker-compose.example.yml
 
 cat > .env <<'EOF'
 BOT_TOKEN=replace-me
