@@ -36,7 +36,7 @@ Two deployment methods are available. **Docker Compose is recommended**.
 ### Method 1: Docker Compose (recommended, no git clone)
 
 ```bash
-mkdir -p guko/keys guko/media guko/tmp
+mkdir -p guko/keys guko/media guko/results guko/tmp
 cd guko
 
 curl -Lo docker-compose.yml https://github.com/shuijiao1/GUKO/releases/latest/download/docker-compose.example.yml
@@ -81,6 +81,8 @@ docker compose pull
 docker compose up -d
 docker compose logs -f
 ```
+
+`docker-compose.yml` explicitly sets `name: guko`, so Docker / DockUP and other management panels show the project as `guko` instead of deriving a random name from the deployment directory.
 
 Only these values need to be changed in the minimal config first:
 
@@ -426,9 +428,9 @@ MIT
 
 ## ⚙️ Versioning and Releases
 
-- Current version: `v0.1.4`
+- Current version: `v0.1.6`
 - Changelog: [`CHANGELOG.md`](CHANGELOG.md)
-- Docker images are published as `latest`, `v0.1.4`, and commit sha tags
+- Docker images are published as `latest`, `v0.1.6`, and commit sha tags
 - GitHub Releases are generated from `CHANGELOG.md`
 - Maintainers can publish a new version with:
 

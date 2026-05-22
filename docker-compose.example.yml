@@ -1,3 +1,4 @@
+name: guko
 services:
   guko-bot:
     image: ghcr.io/shuijiao1/guko:latest

@@ -35,7 +35,7 @@
 ### 方式一：Docker Compose（推荐，无需 git clone）
 
 ```bash
-mkdir -p guko/keys guko/media guko/tmp
+mkdir -p guko/keys guko/media guko/results guko/tmp
 cd guko
 
 curl -Lo docker-compose.yml https://github.com/shuijiao1/GUKO/releases/latest/download/docker-compose.example.yml
@@ -80,6 +80,8 @@ docker compose pull
 docker compose up -d
 docker compose logs -f
 ```
+
+`docker-compose.yml` 已显式设置 `name: guko`，因此在 Docker / DockUP 等管理面板里会显示为 `guko`，不会因为部署目录不同变成随机目录名。
 
 最小配置里只需要先改：
 
@@ -389,9 +391,9 @@ Bot 内还可以导出脱敏配置：
 
 ## ⚙️ 版本与发布
 
-- 当前版本：`v0.1.4`
+- 当前版本：`v0.1.6`
 - 更新记录见 [`CHANGELOG.md`](CHANGELOG.md)
-- Docker 镜像会发布 `latest`、`v0.1.4` 和 commit sha 标签
+- Docker 镜像会发布 `latest`、`v0.1.6` 和 commit sha 标签
 - GitHub Release 会根据 `CHANGELOG.md` 自动生成说明
 - 维护者发布新版本可使用：
 

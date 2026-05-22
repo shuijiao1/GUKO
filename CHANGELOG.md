@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.6] - 2026-05-22
+
+- Docker Compose 示例显式设置项目名为 `guko`，避免部署目录名影响管理面板显示。
+- 更新 README 部署说明，说明 Compose project name 会固定显示为 `guko`。
+
 ## [0.1.5] - 2026-05-20
 
 - 修正文档中的安全表述，补充 Issue 模板，并完善 Release 附件。
