@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.8] - 2026-05-22
+
+- 移除老用户 Compose project 改名迁移脚本，避免把一次性改名流程误认为日常升级步骤。
+- 保留新版 Compose 的 `name: guko`，新部署会直接显示为 `guko`；老部署正常更新镜像不受影响。
+
 ## [0.1.7] - 2026-05-22
 
 - 增加老用户 Compose project name 迁移脚本，稳定处理从目录名 project 迁移到 `guko` 的容器名冲突。
