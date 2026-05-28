@@ -48,7 +48,28 @@ SCRIPT_SOURCES = {
     'stream': ('RegionRestrictionCheck', 'https://github.com/lmc999/RegionRestrictionCheck'),
     'ipq': ('Check.Place', 'https://github.com/xykt/NetQuality'),
     'nq': ('NodeQuality / Check.Place', 'https://github.com/xykt/NodeQuality'),
+    'ss': ('SS-Rust-Manager', 'https://github.com/shuijiao1/SS-Rust-Manager'),
+    'anytls': ('AnyTLS-Manager', 'https://github.com/shuijiao1/AnyTLS-Manager'),
 }
+PROXY_TOOLS = {
+    'ss': {
+        'name': 'SS-Rust',
+        'service': 'ss-rust',
+        'script_url': 'https://ss.shuijiao.de',
+        'install_arg': 'install',
+        'view_arg': 'view',
+        'button': '🔐 SS',
+    },
+    'anytls': {
+        'name': 'AnyTLS',
+        'service': 'anytls',
+        'script_url': 'https://anytls.shuijiao.de',
+        'install_arg': 'install',
+        'view_arg': 'view',
+        'button': '🛡 AnyTLS',
+    },
+}
+
 GB5_VERSION = '5.5.1'
 GB5_URL = f'https://cdn.geekbench.com/Geekbench-{GB5_VERSION}-Linux.tar.gz'
 JOBS = {}
@@ -501,6 +522,11 @@ def script_command_text(kind, **kwargs):
         )
     if kind == 'ipq':
         return '脚本命令：\nbash <(curl -Ls https://IP.Check.Place) -y'
+    if kind in PROXY_TOOLS:
+        tool = PROXY_TOOLS[kind]
+        action = kwargs.get('action') or '<install|view>'
+        arg = tool['install_arg'] if action in ('install', 'ensure') else tool['view_arg']
+        return f"脚本命令：\nbash <(curl -Ls {tool['script_url']}) {arg}"
     if kind == 'nq':
         selected = kwargs.get('selected')
         ip_mode = kwargs.get('ip_mode')
@@ -646,6 +672,10 @@ def server_markup(s):
         test_buttons.append(InlineKeyboardButton('🧭 BGP图', callback_data=f'bgp:{sid}'))
     if tool_enabled('ippure'):
         test_buttons.append(InlineKeyboardButton('🧼 IPPure', callback_data=f'ippure:{sid}'))
+    if tool_enabled('ss'):
+        test_buttons.append(InlineKeyboardButton(PROXY_TOOLS['ss']['button'], callback_data=f'proxy:ss:{sid}'))
+    if tool_enabled('anytls'):
+        test_buttons.append(InlineKeyboardButton(PROXY_TOOLS['anytls']['button'], callback_data=f'proxy:anytls:{sid}'))
     rows.extend(button_rows(test_buttons, 2))
 
     ops_buttons = [
@@ -1004,6 +1034,7 @@ def job_id(kind, s):
 KIND_NAME = {
     'ipq': 'IP质量', 'nq': 'NodeQuality', 'gb5': 'GB5', 'stream': '流媒体检测',
     'nexttrace': 'NextTrace', 'bgp': 'BGP图', 'ippure': 'IPPure图',
+    'ss': 'SS', 'anytls': 'AnyTLS',
 }
 STATUS_ICON = {'queued': '🟡', 'running': '🟢', 'done': '✅', 'failed': '🔴'}
 
@@ -1766,6 +1797,134 @@ async def send_report_images(bot, chat_id, report_links, prefix):
             await bot.send_photo(chat_id, photo=f)
         sent.append((label, url, png))
     return sent
+
+
+def proxy_tool_config(kind):
+    tool = PROXY_TOOLS.get(kind)
+    if not tool:
+        raise RuntimeError('未知工具')
+    return tool
+
+
+def proxy_menu_text(s, kind):
+    tool = proxy_tool_config(kind)
+    return (
+        f"{safe(tool['button'])} <b>{safe(s.get('name'))} · {safe(tool['name'])}</b>\n\n"
+        '安装/更新会先检测目标服务器是否已安装，以及程序本体是否为 GitHub 最新版。\n'
+        '查看只读取目标服务器当前配置并返回连接信息。'
+    )
+
+
+def proxy_markup(s, kind):
+    sid = server_id(s)
+    tool = proxy_tool_config(kind)
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"安装/更新 {tool['name']}", callback_data=f'proxyrun:{kind}:ensure:{sid}')],
+        [InlineKeyboardButton('查看配置', callback_data=f'proxyrun:{kind}:view:{sid}')],
+        [InlineKeyboardButton('↩️ 返回操作面板', callback_data=f'srv:{sid}')],
+    ])
+
+
+def proxy_answers(kind, port=None):
+    # Both manager scripts are interactive for install: menu choice/command arg, port, then password.
+    # Empty password keeps the script default random password.
+    port = str(port or '').strip()
+    if kind == 'ss':
+        # ss-rust also asks encryption method before password; empty method keeps the recommended default.
+        return f"{port}\n\n\n"
+    if kind == 'anytls':
+        return f"{port}\n\n"
+    return "\n"
+
+
+def proxy_extract_config(text, kind):
+    clean = strip_ansi(text or '').replace('\r', '')
+    markers = ['当前配置', 'Surge:', 'Mihomo:', 'URI:', '地址:', '端口:', '密码:', '加密:']
+    lines = []
+    keep = False
+    for raw in clean.splitlines():
+        line = raw.rstrip()
+        if any(m in line for m in markers):
+            keep = True
+        if keep:
+            lines.append(line)
+    body = '\n'.join(lines).strip() or clean.strip()
+    return trim_log(body, 3600)
+
+
+async def run_proxy_tool_task(bot, chat_id, s, jid, kind, action):
+    key = (server_id(s), kind)
+    tool = proxy_tool_config(kind)
+    try:
+        script = tool['script_url']
+        if action in ('install', 'ensure'):
+            port = os.environ.get(f"GUKO_{kind.upper()}_DEFAULT_PORT", '').strip()
+            answers = proxy_answers(kind, port)
+            service = tool['service']
+            bin_path = '/usr/local/bin/ss-rust' if kind == 'ss' else '/usr/local/bin/anytls-server'
+            repo = 'shadowsocks/shadowsocks-rust' if kind == 'ss' else 'anytls/anytls-go'
+            version_cmd = '$BIN --version 2>/dev/null | head -n1 || true' if kind == 'ss' else 'strings $BIN 2>/dev/null | grep -Eo "v?[0-9]+\\.[0-9]+\\.[0-9]+" | sort -Vr | head -n1 || true'
+            remote = (
+                'export TERM=xterm-256color; cd /root; '
+                f'BIN={shlex.quote(bin_path)}; SERVICE={shlex.quote(service)}; REPO={shlex.quote(repo)}; '
+                f'tmp=$(mktemp /root/guko-{kind}.XXXXXX.sh); '
+                f'curl -LfsS {shlex.quote(script)} -o "$tmp"; chmod +x "$tmp"; '
+                f'latest=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep -m1 "tag_name" | sed -E "s/.*\\\"tag_name\\\"[[:space:]]*:[[:space:]]*\\\"([^\\\"]+)\\\".*/\\1/" || true); '
+                f'current=""; [[ -x "$BIN" ]] && current=$({version_cmd}); '
+                f'latest_num=${{latest#v}}; current_num=$(printf %s "$current" | grep -Eo "[0-9]+\\.[0-9]+\\.[0-9]+" | head -n1 || true); '
+                f'if [[ ! -x "$BIN" || ! -f "/etc/systemd/system/$SERVICE.service" ]]; then '
+                f'  echo "GUKO_STATUS:未安装，开始安装"; '
+                f'  printf %b {shlex.quote(answers)} | bash "$tmp" install; '
+                f'elif [[ -n "$latest_num" && -n "$current_num" && "$current_num" == "$latest_num" ]]; then '
+                f'  echo "GUKO_STATUS:已安装最新版，无需更新 ($latest)"; '
+                f'  if command -v systemctl >/dev/null 2>&1 && ! systemctl is-active --quiet "$SERVICE"; then echo "GUKO_STATUS:服务未运行，尝试启动"; systemctl start "$SERVICE" || true; fi; '
+                f'  bash "$tmp" view; '
+                f'else '
+                f'  echo "GUKO_STATUS:发现程序更新：当前=${{current:-unknown}} 最新=${{latest:-unknown}}，开始更新"; '
+                f'  printf %b {shlex.quote(answers)} | bash "$tmp" install; '
+                f'fi 2>&1'
+            )
+            timeout = 1800
+        elif action == 'view':
+            remote = (
+                'export TERM=xterm-256color; cd /root; '
+                f'tmp=$(mktemp /root/guko-{kind}.XXXXXX.sh); '
+                f'curl -LfsS {shlex.quote(script)} -o "$tmp"; chmod +x "$tmp"; '
+                f'bash "$tmp" view 2>&1'
+            )
+            timeout = 300
+        else:
+            raise RuntimeError('未知操作')
+        code, out = await run_subprocess(ssh_args(s, remote, tty=False), timeout=timeout, env=ssh_env_for(s))
+        body = proxy_extract_config(out, kind)
+        ok = code == 0 and body
+        JOBS[jid].update({'status': 'done' if ok else 'failed', 'log': out, 'target': action})
+        if action in ('install', 'ensure'):
+            if 'GUKO_STATUS:未安装' in out:
+                title = '安装完成'
+            elif 'GUKO_STATUS:已安装最新版' in out:
+                title = '已安装最新版，无需更新'
+            elif 'GUKO_STATUS:发现程序更新' in out:
+                title = '程序已更新'
+            else:
+                title = '安装/更新检查完成'
+        else:
+            title = '当前配置'
+        icon = '✅' if ok else '❌'
+        msg = f"{icon} {safe(s.get('name'))} {safe(tool['name'])} {title}"
+        if not ok:
+            msg += f"（退出码 {safe(code)}）"
+        status_lines = [line.split(':', 1)[1] for line in strip_ansi(out or '').splitlines() if line.startswith('GUKO_STATUS:')]
+        status_text = '\n'.join(status_lines).strip()
+        if status_text:
+            msg += f"\n{safe(status_text)}"
+        msg += f"\n\n<pre>{safe(body or '无输出')}</pre>\n\n{script_command_html(kind, action=action)}"
+        await send_long_text(bot, chat_id, msg, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        JOBS[jid].update({'status': 'failed', 'log': repr(e), 'target': action})
+        await bot.send_message(chat_id, f"❌ {safe(s.get('name'))} {safe(tool['name'])} 任务失败：<code>{safe(e)}</code>", parse_mode=ParseMode.HTML)
+    finally:
+        finish_job(jid, key)
 
 
 async def run_ip_quality_task(bot, chat_id, s, jid):
@@ -3204,6 +3363,28 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=main_menu_markup())
             return
         await q.edit_message_text(f'已从配置删除：<b>{safe(removed.get("name"))}</b>', parse_mode=ParseMode.HTML, reply_markup=main_menu_markup())
+    elif data.startswith('proxy:'):
+        parts = data.split(':', 2)
+        kind = parts[1]
+        sid = parts[2] if len(parts) > 2 else ''
+        s = find_server_by_id(sid)
+        if kind not in PROXY_TOOLS or not s:
+            await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回列表', callback_data='act:list')]]))
+            return
+        await q.edit_message_text(proxy_menu_text(s, kind), parse_mode=ParseMode.HTML, reply_markup=proxy_markup(s, kind))
+    elif data.startswith('proxyrun:'):
+        parts = data.split(':', 3)
+        kind = parts[1] if len(parts) > 1 else ''
+        action = parts[2] if len(parts) > 2 else ''
+        sid = parts[3] if len(parts) > 3 else ''
+        s = find_server_by_id(sid)
+        if kind not in PROXY_TOOLS or action not in ('install', 'ensure', 'view') or not s:
+            await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回列表', callback_data='act:list')]]))
+            return
+        tool = proxy_tool_config(kind)
+        task = f"{safe(tool['name'])} {'安装/更新检查' if action in ('install', 'ensure') else '查看配置'}"
+        jid, pos = enqueue_job(s, kind, run_proxy_tool_task, context.bot, q.message.chat_id, s, kind, action, target=action)
+        await bot_queue_notice(context.bot, q.message.chat_id, s, task, pos)
     elif data.startswith('ipq:'):
         sid = data.split(':', 1)[1]
         s = find_server_by_id(sid)
