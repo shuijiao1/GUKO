@@ -22,18 +22,20 @@ DEFAULT_CJK = "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"
 
 FG = {
     "fa0": (0, 0, 0),
-    "fa1": (210, 55, 55),
-    "fa2": (45, 205, 65),
-    "fa3": (190, 170, 45),
-    "fa6": (45, 190, 190),
-    "fa7": (205, 205, 205),
+    "fa1": (255, 112, 112),
+    "fa2": (100, 255, 116),
+    "fa3": (255, 232, 96),
+    "fa6": (96, 245, 245),
+    "fa7": (246, 246, 246),
 }
 BG = {
-    "ba1": (145, 0, 0),
-    "ba2": (0, 125, 0),
-    "ba3": (135, 118, 0),
-    "ba7": (205, 205, 205),
+    "ba1": (178, 22, 22),
+    "ba2": (14, 150, 28),
+    "ba3": (166, 146, 22),
+    "ba7": (225, 225, 225),
 }
+TERMINAL_BG = (8, 10, 14)
+OUTPUT_SCALE = 1
 
 
 def cells(ch: str) -> int:
@@ -60,10 +62,16 @@ def render(svg_path: Path, out_path: Path, *, cell_w: int, cell_h: int, font_siz
     latin_italic = ImageFont.truetype(DEFAULT_LATIN_ITALIC, font_size)
     cjk = ImageFont.truetype(DEFAULT_CJK, font_size)
 
+    scale = OUTPUT_SCALE
+    cell_w *= scale
+    cell_h *= scale
+    font_size *= scale
+    pad *= scale
+
     image = Image.new(
         "RGB",
         (pad * 2 + width_cells * cell_w, pad * 2 + height_cells * cell_h),
-        (0, 0, 0),
+        TERMINAL_BG,
     )
     draw = ImageDraw.Draw(image)
 
@@ -117,17 +125,17 @@ def render(svg_path: Path, out_path: Path, *, cell_w: int, cell_h: int, font_siz
                 col += span
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    image.save(out_path, optimize=True)
+    image.save(out_path, optimize=False, compress_level=4)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Render Check.Place SVG to terminal-like PNG")
     parser.add_argument("svg", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--cell-w", type=int, default=12, help="terminal cell width in px; proven Telegram value: 12")
-    parser.add_argument("--cell-h", type=int, default=24, help="terminal cell height in px; proven Telegram value: 24")
-    parser.add_argument("--font-size", type=int, default=20, help="font size in px; proven Telegram value: 20")
-    parser.add_argument("--pad", type=int, default=8, help="black padding in px")
+    parser.add_argument("--cell-w", type=int, default=15, help="terminal cell width in px; wider cells make Telegram previews easier to read")
+    parser.add_argument("--cell-h", type=int, default=30, help="terminal cell height in px; taller rows keep larger text crisp")
+    parser.add_argument("--font-size", type=int, default=26, help="font size in px; tuned for readable Telegram previews")
+    parser.add_argument("--pad", type=int, default=10, help="padding in px")
     args = parser.parse_args()
     render(args.svg, args.output, cell_w=args.cell_w, cell_h=args.cell_h, font_size=args.font_size, pad=args.pad)
     return 0
