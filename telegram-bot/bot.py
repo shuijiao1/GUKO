@@ -16,7 +16,7 @@ import shlex
 import socket
 from pathlib import Path
 from typing import Iterable
-from collections import OrderedDict, deque
+from collections import OrderedDict
 from urllib.parse import urlparse
 import urllib.error
 from PIL import Image, ImageDraw, ImageFont
@@ -28,7 +28,7 @@ from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-GUKO_VERSION = os.environ.get('GUKO_VERSION', '0.1.9').strip() or '0.1.9'
+GUKO_VERSION = os.environ.get('GUKO_VERSION', '0.1.10').strip() or '0.1.10'
 DATA_DIR = Path(os.environ.get('DATA_DIR', '/data'))
 SERVERS_JSON = Path(os.environ.get('GUKO_INV') or os.environ.get('VPSPILOT_INV') or DATA_DIR / 'servers.json')
 MEDIA_DIR = Path(os.environ.get('MEDIA_DIR', DATA_DIR / 'media'))
@@ -74,8 +74,6 @@ GB5_VERSION = '5.5.1'
 GB5_URL = f'https://cdn.geekbench.com/Geekbench-{GB5_VERSION}-Linux.tar.gz'
 JOBS = {}
 RUNNING = set()
-QUEUES = {}
-QUEUE_WORKERS = {}
 PENDING_NEXTTRACE = {}
 ADD_SESSIONS = {}
 HISTORY_JSON = Path(os.environ.get('HISTORY_JSON', DATA_DIR / 'history.json'))
@@ -473,11 +471,11 @@ async def send_running_notice(bot, chat_id, s, task):
     await bot.send_message(chat_id, running_text(s, task), parse_mode=ParseMode.HTML)
 
 
-async def bot_queue_notice(bot, chat_id, s, task, pos):
-    if pos <= 1:
+async def bot_task_started_notice(bot, chat_id, s, task, started=True):
+    if started:
         await bot.send_message(chat_id, running_text(s, task), parse_mode=ParseMode.HTML)
     else:
-        await bot.send_message(chat_id, f'已加入队列：{safe(s.get("name"))} {task}（第 {pos} 个）', parse_mode=ParseMode.HTML)
+        await bot.send_message(chat_id, f'这个任务已经在运行中：{safe(s.get("name"))} {task}', parse_mode=ParseMode.HTML)
 
 
 def is_valid_hostname(value):
@@ -1036,7 +1034,7 @@ KIND_NAME = {
     'nexttrace': 'NextTrace', 'bgp': 'BGP图', 'ippure': 'IPPure图',
     'ss': 'SS', 'anytls': 'AnyTLS',
 }
-STATUS_ICON = {'queued': '🟡', 'running': '🟢', 'done': '✅', 'failed': '🔴'}
+STATUS_ICON = {'running': '🟢', 'done': '✅', 'failed': '🔴'}
 
 
 def iso_now():
@@ -1143,7 +1141,7 @@ def history_append(jid, job):
     save_history(hist)
 
 
-def create_job(s, kind, status='queued', **extra):
+def create_job(s, kind, status='running', **extra):
     jid = job_id(kind, s)
     now = iso_now()
     JOBS[jid] = {
@@ -1185,45 +1183,12 @@ def finish_job(jid, key=None):
         RUNNING.discard(key)
 
 
-def queue_key(s):
-    return str(server_id(s))
-
-
-def queue_position(s, jid):
-    q = QUEUES.get(queue_key(s)) or deque()
-    for i, entry in enumerate(q, start=1):
-        if entry.get('jid') == jid:
-            return i
-    return None
-
-
-async def queue_worker(s):
-    qk = queue_key(s)
-    q = QUEUES.setdefault(qk, deque())
-    while q:
-        entry = q[0]
-        jid = entry['jid']
-        job = JOBS.get(jid) or {}
-        job['status'] = 'running'
-        job['started_at'] = iso_now()
-        JOBS[jid] = job
-        RUNNING.add((server_id(s), job.get('kind')))
-        try:
-            await entry['runner'](*entry['args'])
-        finally:
-            q.popleft()
-    QUEUE_WORKERS.pop(qk, None)
-
-
-def enqueue_job(s, kind, runner, bot, chat_id, server, *runner_tail, **extra):
-    qk = queue_key(s)
-    jid = create_job(s, kind, status='queued', **extra)
-    entry = {'jid': jid, 'runner': runner, 'args': (bot, chat_id, server, jid, *runner_tail)}
-    q = QUEUES.setdefault(qk, deque())
-    q.append(entry)
-    if qk not in QUEUE_WORKERS or QUEUE_WORKERS[qk].done():
-        QUEUE_WORKERS[qk] = asyncio.create_task(queue_worker(s))
-    return jid, len(q)
+def launch_job(s, kind, runner, bot, chat_id, server, *runner_tail, **extra):
+    jid, _key = start_job(s, kind, **extra)
+    if not jid:
+        return None
+    asyncio.create_task(runner(bot, chat_id, server, jid, *runner_tail))
+    return jid
 
 
 def server_history(s, limit=20):
@@ -1351,7 +1316,7 @@ def server_jobs(s):
     host = str(s.get('host') or '')
     found = []
     for jid, j in JOBS.items():
-        if (j.get('status') or '') not in ('running', 'queued'):
+        if (j.get('status') or '') != 'running':
             continue
         j_server = str(j.get('server') or '')
         if f'-{sid}-' in str(jid) or j_server in (name, host, sid):
@@ -1376,10 +1341,6 @@ def compact_job_line(s, jid, j):
     extras = []
     if j.get('ip_mode'):
         extras.append(str(j.get('ip_mode')))
-    if status == 'queued':
-        pos = queue_position(s, jid)
-        if pos:
-            extras.append(f'队列第 {pos} 个')
     if extras:
         tail += f"（{'；'.join(extras)}）"
     return f'{icon} {safe(label)} - {safe(tail)}'
@@ -3100,8 +3061,8 @@ async def fallback_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not target:
             await update.message.reply_text('没识别到 IP 或域名，已取消这次 NextTrace。')
             return
-        jid, pos = enqueue_job(s, 'nexttrace', run_nexttrace_task, context.bot, chat_id, s, target, target=target)
-        await bot_queue_notice(context.bot, chat_id, s, f'NextTrace {safe(target)}', pos)
+        jid = launch_job(s, 'nexttrace', run_nexttrace_task, context.bot, chat_id, s, target, target=target)
+        await bot_task_started_notice(context.bot, chat_id, s, f'NextTrace {safe(target)}', jid is not None)
         return
     # 普通文本不再触发任何功能；只有点击 NextTrace 后的下一条 IP/域名才会被消费。
     return
@@ -3153,11 +3114,11 @@ async def nexttrace_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not (extract_ipv4(target) or normalize_domain(target)):
         await update.message.reply_text('目标需要是 IPv4 或域名。')
         return
-    jid, pos = enqueue_job(s, 'nexttrace', run_nexttrace_task, context.bot, update.effective_chat.id, s, target, target=target)
-    if pos <= 1:
+    jid = launch_job(s, 'nexttrace', run_nexttrace_task, context.bot, update.effective_chat.id, s, target, target=target)
+    if jid:
         await update.message.reply_text(f'🛣 已启动 {safe(s.get("name"))} NextTrace：{safe(target)}', parse_mode=ParseMode.HTML)
     else:
-        await update.message.reply_text(f'🕒 已加入队列：{safe(s.get("name"))} NextTrace：{safe(target)}（第 {pos} 个）', parse_mode=ParseMode.HTML)
+        await update.message.reply_text(f'这个任务已经在运行中：{safe(s.get("name"))} NextTrace：{safe(target)}', parse_mode=ParseMode.HTML)
 
 
 async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3383,24 +3344,24 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         tool = proxy_tool_config(kind)
         task = f"{safe(tool['name'])} {'安装/更新检查' if action in ('install', 'ensure') else '查看配置'}"
-        jid, pos = enqueue_job(s, kind, run_proxy_tool_task, context.bot, q.message.chat_id, s, kind, action, target=action)
-        await bot_queue_notice(context.bot, q.message.chat_id, s, task, pos)
+        jid = launch_job(s, kind, run_proxy_tool_task, context.bot, q.message.chat_id, s, kind, action, target=action)
+        await bot_task_started_notice(context.bot, q.message.chat_id, s, task, jid is not None)
     elif data.startswith('ipq:'):
         sid = data.split(':', 1)[1]
         s = find_server_by_id(sid)
         if not s:
             await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回列表', callback_data='act:list')]]))
             return
-        jid, pos = enqueue_job(s, 'ipq', run_ip_quality_task, context.bot, q.message.chat_id, s)
-        await bot_queue_notice(context.bot, q.message.chat_id, s, 'IP质量任务', pos)
+        jid = launch_job(s, 'ipq', run_ip_quality_task, context.bot, q.message.chat_id, s)
+        await bot_task_started_notice(context.bot, q.message.chat_id, s, 'IP质量任务', jid is not None)
     elif data.startswith('gb5:'):
         sid = data.split(':', 1)[1]
         s = find_server_by_id(sid)
         if not s:
             await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回列表', callback_data='act:list')]]))
             return
-        jid, pos = enqueue_job(s, 'gb5', run_gb5_task, context.bot, q.message.chat_id, s)
-        await bot_queue_notice(context.bot, q.message.chat_id, s, 'GB5', pos)
+        jid = launch_job(s, 'gb5', run_gb5_task, context.bot, q.message.chat_id, s)
+        await bot_task_started_notice(context.bot, q.message.chat_id, s, 'GB5', jid is not None)
     elif data.startswith('stream:') or data.startswith('streamrun:'):
         sid = data.split(':', 1)[1]
         s = find_server_by_id(sid)
@@ -3408,8 +3369,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回列表', callback_data='act:list')]]))
             return
         region_id, region_label = stream_region_for_server(s)
-        jid, pos = enqueue_job(s, 'stream', run_stream_task, context.bot, q.message.chat_id, s, region=region_label)
-        await bot_queue_notice(context.bot, q.message.chat_id, s, f'流媒体检测（{safe(region_label)}）', pos)
+        jid = launch_job(s, 'stream', run_stream_task, context.bot, q.message.chat_id, s, region=region_label)
+        await bot_task_started_notice(context.bot, q.message.chat_id, s, f'流媒体检测（{safe(region_label)}）', jid is not None)
     elif data.startswith('ntask:'):
         sid = data.split(':', 1)[1]
         s = find_server_by_id(sid)
@@ -3430,24 +3391,24 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not s:
             await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回列表', callback_data='act:list')]]))
             return
-        jid, pos = enqueue_job(s, 'nexttrace', run_nexttrace_task, context.bot, q.message.chat_id, s, target, target=target)
-        await bot_queue_notice(context.bot, q.message.chat_id, s, f'NextTrace {safe(target)}', pos)
+        jid = launch_job(s, 'nexttrace', run_nexttrace_task, context.bot, q.message.chat_id, s, target, target=target)
+        await bot_task_started_notice(context.bot, q.message.chat_id, s, f'NextTrace {safe(target)}', jid is not None)
     elif data.startswith('bgp:'):
         sid = data.split(':', 1)[1]
         s = find_server_by_id(sid)
         if not s:
             await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回列表', callback_data='act:list')]]))
             return
-        jid, pos = enqueue_job(s, 'bgp', run_bgp_task, context.bot, q.message.chat_id, s)
-        await bot_queue_notice(context.bot, q.message.chat_id, s, 'BGP 图任务', pos)
+        jid = launch_job(s, 'bgp', run_bgp_task, context.bot, q.message.chat_id, s)
+        await bot_task_started_notice(context.bot, q.message.chat_id, s, 'BGP 图任务', jid is not None)
     elif data.startswith('ippure:'):
         sid = data.split(':', 1)[1]
         s = find_server_by_id(sid)
         if not s:
             await q.edit_message_text('这台服务器不在当前清单里。', reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton('↩️ 返回列表', callback_data='act:list')]]))
             return
-        jid, pos = enqueue_job(s, 'ippure', run_ippure_task, context.bot, q.message.chat_id, s)
-        await bot_queue_notice(context.bot, q.message.chat_id, s, 'IPPure 图任务', pos)
+        jid = launch_job(s, 'ippure', run_ippure_task, context.bot, q.message.chat_id, s)
+        await bot_task_started_notice(context.bot, q.message.chat_id, s, 'IPPure 图任务', jid is not None)
     elif data.startswith('bgpip:'):
         ip = data.split(':', 1)[1]
         if not is_ipv4(ip):
@@ -3524,8 +3485,8 @@ async def on_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ip_mode = '4'
         selected_text = nq_selected_text(mask)
         ip_text = nq_ip_mode_text(ip_mode)
-        jid, pos = enqueue_job(s, 'nq', run_nq_task, context.bot, q.message.chat_id, s, mask, ip_mode, selected=selected_text, ip_mode=ip_text)
-        await bot_queue_notice(context.bot, q.message.chat_id, s, f'NodeQuality（{safe(selected_text)}；{safe(ip_text)}）', pos)
+        jid = launch_job(s, 'nq', run_nq_task, context.bot, q.message.chat_id, s, mask, ip_mode, selected=selected_text, ip_mode=ip_text)
+        await bot_task_started_notice(context.bot, q.message.chat_id, s, f'NodeQuality（{safe(selected_text)}；{safe(ip_text)}）', jid is not None)
     elif data.startswith('srv:'):
         sid = data.split(':', 1)[1]
         s = find_server_by_id(sid)
