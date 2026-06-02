@@ -28,7 +28,7 @@ from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-GUKO_VERSION = os.environ.get('GUKO_VERSION', '0.1.12').strip() or '0.1.12'
+GUKO_VERSION = os.environ.get('GUKO_VERSION', '0.1.13').strip() or '0.1.13'
 DATA_DIR = Path(os.environ.get('DATA_DIR', '/data'))
 SERVERS_JSON = Path(os.environ.get('GUKO_INV') or os.environ.get('VPSPILOT_INV') or DATA_DIR / 'servers.json')
 MEDIA_DIR = Path(os.environ.get('MEDIA_DIR', DATA_DIR / 'media'))
@@ -1092,7 +1092,19 @@ def all_result_files(s, kind):
     return files if files else legacy_media_files(s, kind)
 
 
-def persist_result_file(s, kind, src, suffix=None):
+def clear_result_files(s, kind):
+    root = kind_result_dir(s, kind)
+    if not root.exists():
+        return
+    for old in root.iterdir():
+        if old.is_file():
+            try:
+                old.unlink()
+            except Exception:
+                pass
+
+
+def persist_result_file(s, kind, src, suffix=None, clear=True):
     if not src:
         return None
     src = Path(src)
@@ -1100,12 +1112,8 @@ def persist_result_file(s, kind, src, suffix=None):
         return None
     root = kind_result_dir(s, kind)
     root.mkdir(parents=True, exist_ok=True)
-    for old in root.iterdir():
-        if old.is_file():
-            try:
-                old.unlink()
-            except Exception:
-                pass
+    if clear:
+        clear_result_files(s, kind)
     ext = suffix or src.suffix or '.bin'
     dst = root / f'latest{ext}'
     if src.resolve() != dst.resolve():
@@ -1151,7 +1159,7 @@ def history_append(jid, job):
         'started_at': job.get('started_at'),
         'completed_at': job.get('completed_at'),
         'duration_sec': job.get('duration_sec'),
-        'urls': extract_urls(job.get('log') or '')[:8],
+        'urls': history_urls(job.get('log') or ''),
         'media_paths': job.get('media_paths') or ([] if not job.get('media_path') else [job.get('media_path')]),
         'log_tail': trim_log(strip_ansi(job.get('log') or ''), 3500),
     }
@@ -1387,6 +1395,35 @@ def extract_urls(text):
     return [u.rstrip('.,;，。)】]') for u in urls]
 
 
+def history_urls(text, limit=24):
+    urls = []
+    seen = set()
+    nq = nodequality_url(text)
+    if nq:
+        urls.append(nq)
+        seen.add(nq)
+    for u in extract_urls(text):
+        clean = strip_ansi(u).rstrip('.,;，。)】]')
+        m = re.search(r'(https?://nodequality\.com/r/[A-Za-z0-9]{32})', clean)
+        if m:
+            clean = m.group(1)
+        if clean not in seen and (
+            'Report.Check.Place/' in clean
+            or 'browser.geekbench.com/' in clean
+            or 'nodequality.com/r/' in clean
+        ):
+            urls.append(clean)
+            seen.add(clean)
+    for u in extract_urls(text):
+        clean = strip_ansi(u).rstrip('.,;，。)】]')
+        if clean not in seen:
+            urls.append(clean)
+            seen.add(clean)
+        if len(urls) >= limit:
+            break
+    return urls[:limit]
+
+
 def first_report_url(text, category=None):
     urls = extract_urls(text)
     reports = [u for u in urls if 'Report.Check.Place' in u]
@@ -1413,10 +1450,17 @@ def geekbench_urls(text):
     return urls
 
 def nodequality_url(text):
-    for u in extract_urls(text):
+    clean = strip_ansi(text or '')
+    # NodeQuality output can be immediately followed by curl progress digits
+    # (for example the trailing "00" from "100"), so capture only the token.
+    m = re.search(r'https?://nodequality\.com/r/([A-Za-z0-9]{32})', clean)
+    if m:
+        return f'https://nodequality.com/r/{m.group(1)}'
+    for u in extract_urls(clean):
         u = strip_ansi(u).rstrip('.,;，。')
-        if 'nodequality.com/r/' in u:
-            return u
+        m = re.search(r'(https?://nodequality\.com/r/[A-Za-z0-9]{32})', u)
+        if m:
+            return m.group(1)
     return None
 
 
@@ -2772,19 +2816,24 @@ async def run_nq_task(bot, chat_id, s, jid, mask=NQ_ALL_MASK, ip_mode='4'):
         ip_text = nq_ip_mode_text(ip_mode)
         answers = nq_answer_script(mask)
         ipv_arg = nq_remote_ipv_arg(s, ip_mode)
-        remote = "export TERM=xterm-256color; cd /root && script=$(mktemp /root/nodequality.XXXXXX.sh); curl -sL https://run.NodeQuality.com > $script; sed -i 's#rm -rf \"${work_dir}\"/#: # rm -rf \"${work_dir}\"/#' $script; printf %b " + shlex.quote(answers) + " | bash $script " + ipv_arg
+        # Patch Net.Check.Place's TCP large-packet mtr probes with a per-probe
+        # timeout. On some VPSes mtr can hang forever at the 09% delay stage,
+        # leaving empty net_quality.json/result.zip.
+        remote = (
+            "export TERM=xterm-256color; cd /root && "
+            "script=$(mktemp /root/nodequality.XXXXXX.sh); "
+            "curl -sL https://run.NodeQuality.com > $script; "
+            "sed -i 's#rm -rf \\\"${work_dir}\\\"/#: # rm -rf \\\"${work_dir}\\\"/#' $script; "
+            "sed -i 's#response=$(\\$pingcom 2>\\&1)#response=$(timeout -s SIGKILL 15 $pingcom 2>\\&1)#' $script; "
+            "printf %b " + shlex.quote(answers) + " | bash $script " + ipv_arg
+        )
         code, out = await run_subprocess(ssh_args(s, remote, tty=False), timeout=7200, env=ssh_env_for(s))
-        JOBS[jid].update({'status': 'running', 'log': out, 'selected': selected_text, 'ip_mode': ip_text})
+        JOBS[jid].update({'log': out, 'selected': selected_text, 'ip_mode': ip_text})
         nq = nodequality_url(out)
         gb_urls = geekbench_urls(out)
-        fixed_nq = None
-        if nq:
-            try:
-                fixed_nq = await upload_nodequality_result_from_remote(s)
-            except Exception:
-                fixed_nq = None
-            if fixed_nq:
-                nq = fixed_nq
+        # Keep the URL generated by the official NodeQuality script. Re-uploading
+        # result.zip can create a record that opens with `bad token` / JSON parse
+        # errors on nodequality.com, so do not replace the original link here.
         report_links = []
         for label, cat, bit in [('硬件', 'hardware', 1), ('IP质量', 'ip', 2), ('网络', 'net', 4), ('回程', 'backroute', 8)]:
             if not (mask & bit):
@@ -2796,12 +2845,15 @@ async def run_nq_task(bot, chat_id, s, jid, mask=NQ_ALL_MASK, ip_mode='4'):
             report_links = await recover_report_links_from_remote(s, mask)
         image_ok = False
         image_error = ''
-        if report_links:
+        # Full NodeQuality already has a combined result page; avoid sending
+        # multiple分项 screenshots. Partial/single selections still send images.
+        if report_links and mask != NQ_ALL_MASK:
             try:
                 sent = await send_report_images(bot, chat_id, report_links, f"nq-{server_id(s)}")
                 media_paths = []
+                clear_result_files(s, 'nq')
                 for label, url, png in sent:
-                    saved = persist_result_file(s, 'nq', png, f'-{label}.png')
+                    saved = persist_result_file(s, 'nq', png, f'-{label}.png', clear=False)
                     if saved:
                         media_paths.append(saved)
                 if media_paths:
@@ -2821,7 +2873,7 @@ async def run_nq_task(bot, chat_id, s, jid, mask=NQ_ALL_MASK, ip_mode='4'):
                 api = f"https://api.nodequality.com/api/v1/record/{token}" if token else None
                 if api:
                     msg += f"\n原始报告接口：\n{safe(api)}"
-        if not image_ok and report_links:
+        if mask != NQ_ALL_MASK and not image_ok and report_links:
             msg += "\n\n分项报告：\n" + "\n".join(f"- {safe(label)}: {safe(url)}" for label, url in report_links)
             if image_error:
                 msg += f"\n\n转 PNG 失败：<code>{safe(image_error)}</code>"
@@ -2846,9 +2898,6 @@ async def send_history_result(bot, chat_id, s, kind):
         p = Path(x)
         if p.exists() and p.is_file() and p.stat().st_size > 0:
             media_paths.append(p)
-    for media in media_paths:
-        with media.open('rb') as f:
-            await bot.send_photo(chat_id, photo=f)
     if kind == 'nq':
         urls = item.get('urls') or []
         nq = next((u for u in urls if 'nodequality.com/r/' in u), None)
@@ -2856,6 +2905,11 @@ async def send_history_result(bot, chat_id, s, kind):
         report_urls = [u for u in urls if 'Report.Check.Place/' in u]
         selected = item.get('selected') or '-'
         ip_mode = item.get('ip_mode') or '-'
+        is_full_nq = selected == nq_selected_text(NQ_ALL_MASK)
+        if not is_full_nq:
+            for media in media_paths:
+                with media.open('rb') as f:
+                    await bot.send_photo(chat_id, photo=f)
         msg = f"✅ {safe(s.get('name'))} NodeQuality 完成：{safe(selected)}；{safe(ip_mode)}"
         if nq:
             msg += f"\n\nNodeQuality:\n{safe(nq)}"
@@ -2867,6 +2921,9 @@ async def send_history_result(bot, chat_id, s, kind):
         await bot.send_message(chat_id, msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
         return True
     if media_paths:
+        for media in media_paths:
+            with media.open('rb') as f:
+                await bot.send_photo(chat_id, photo=f)
         return True
     await bot.send_message(chat_id, history_detail_text(s, kind), parse_mode=ParseMode.HTML, disable_web_page_preview=True)
     return True

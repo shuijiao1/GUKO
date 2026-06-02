@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.13] - 2026-06-02
+
+- 修复 NodeQuality 结果链接可能被 curl 进度数字污染，确保只保留有效 32 位 token。
+- 完整 NodeQuality / 全选任务只发送总结果链接，不再发送分项图片；单选或部分选择仍会发送对应分项图片。
+- 修复 NodeQuality 历史记录丢失关键链接的问题，优先保留总结果、Report.Check.Place 分项报告和 Geekbench 链接。
+- 修复 NetQuality 在部分机器的 TCP 大包延迟阶段卡住导致空结果的问题，为探测步骤加入超时保护。
+- 保留官方 NodeQuality 生成的结果链接，不再二次上传空包或坏包生成无效链接。
+
 ## [0.1.12] - 2026-06-02
 
 - 新增 VLESS 与 Snell 管理入口；VLESS 安装可选择纯 VLESS 或 Vision + Reality。
