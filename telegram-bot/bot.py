@@ -28,7 +28,7 @@ from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-GUKO_VERSION = os.environ.get('GUKO_VERSION', '0.1.13').strip() or '0.1.13'
+GUKO_VERSION = os.environ.get('GUKO_VERSION', '0.1.14').strip() or '0.1.14'
 DATA_DIR = Path(os.environ.get('DATA_DIR', '/data'))
 SERVERS_JSON = Path(os.environ.get('GUKO_INV') or os.environ.get('VPSPILOT_INV') or DATA_DIR / 'servers.json')
 MEDIA_DIR = Path(os.environ.get('MEDIA_DIR', DATA_DIR / 'media'))
@@ -1884,7 +1884,21 @@ def proxy_answers(kind, port=None, mode=None):
 
 def proxy_extract_config(text, kind):
     clean = strip_ansi(text or '').replace('\r', '')
-    markers = ['当前配置', 'Surge:', 'Mihomo:', 'URI:', '地址:', '端口:', '密码:', '加密:', 'VLESS', 'UUID:', 'PublicKey:', 'ShortId:', 'SNI:', '服务端配置:', '客户端 JSON:']
+    if kind == 'vless':
+        lines = []
+        keep = False
+        for raw in clean.splitlines():
+            line = raw.rstrip()
+            if line.startswith('VLESS ') or line.startswith('vless://') or line.startswith('UUID:') or line.startswith('端口:') or line.startswith('客户端 JSON:') or line.startswith('服务端配置:') or line.startswith('{'):
+                keep = True
+            if keep:
+                if 'Xray VLESS Manager' in line or line.startswith('=== 基础功能 ===') or line.startswith('=== 服务管理 ===') or line.startswith('=== 系统功能 ===') or re.match(r'^\s*\d+\)', line) or line.strip() == '0) 退出':
+                    break
+                lines.append(line)
+        body = '\n'.join(lines).strip()
+        return trim_log(body or clean.strip(), 3600)
+
+    markers = ['当前配置', 'Surge:', 'Mihomo:', 'URI:', '地址:', '端口:', '密码:', '加密:', '版本:', 'UUID:', 'PublicKey:', 'ShortId:', 'SNI:', '服务端配置:', '客户端 JSON:']
     lines = []
     keep = False
     for raw in clean.splitlines():
@@ -1895,6 +1909,33 @@ def proxy_extract_config(text, kind):
             lines.append(line)
     body = '\n'.join(lines).strip() or clean.strip()
     return trim_log(body, 3600)
+
+
+def is_proxy_link_line(line):
+    s = (line or '').strip()
+    return s.startswith(('vless://', 'ss://', 'anytls://', 'snell://', 'VPS = ', '- {', '- {"', '{'))
+
+
+def format_proxy_config_html(body):
+    if not body:
+        return '<code>无节点配置输出</code>'
+    out = []
+    in_quote = False
+    for raw in str(body).splitlines():
+        line = raw.rstrip()
+        if is_proxy_link_line(line):
+            if in_quote:
+                out.append('</blockquote>')
+            out.append(f'<blockquote><code>{safe(line.strip())}</code></blockquote>')
+            in_quote = False
+        else:
+            if in_quote:
+                out.append('</blockquote>')
+                in_quote = False
+            out.append(safe(line))
+    if in_quote:
+        out.append('</blockquote>')
+    return '\n'.join(out).strip()
 
 
 async def run_proxy_tool_task(bot, chat_id, s, jid, kind, action, mode=None):
@@ -1926,6 +1967,8 @@ async def run_proxy_tool_task(bot, chat_id, s, jid, kind, action, mode=None):
                 version_cmd = '$BIN --version 2>/dev/null | head -n1 || true'
             elif kind == 'anytls':
                 version_cmd = 'strings $BIN 2>/dev/null | grep -Eo "v?[0-9]+\\.[0-9]+\\.[0-9]+" | sort -Vr | head -n1 || true'
+            elif kind == 'vless':
+                version_cmd = '$BIN version 2>/dev/null | head -n1 || $BIN run -version 2>/dev/null | head -n1 || true'
             else:
                 version_cmd = '$BIN version 2>/dev/null | head -n1 || $BIN --version 2>/dev/null | head -n1 || true'
             latest_probe = ''
@@ -1938,7 +1981,8 @@ async def run_proxy_tool_task(bot, chat_id, s, jid, kind, action, mode=None):
             install_cmd = f'printf %b {shlex.quote(answers)} | bash "$tmp" install'
             if kind == 'vless':
                 menu_choice = '3' if mode == 'reality' else '2'
-                install_cmd = f'printf %b {shlex.quote(menu_choice + "\n" + answers + "\n0\n")} | bash "$tmp"'
+                safe_sed = "perl -0pi -e 's/\\$XRAY_BIN test -config \"\\$CONFIG\"/if \\$XRAY_BIN help 2>\\/dev\\/null | grep -qE \"^[[:space:]]*test[[:space:]]\"; then \\$XRAY_BIN test -config \"\\$CONFIG\"; else \\$XRAY_BIN run -test -config \"\\$CONFIG\"; fi/' \"$tmp\"; "
+                install_cmd = f'{safe_sed}printf %b {shlex.quote(menu_choice + "\n" + answers + "\n0\n")} | bash "$tmp"'
             remote = (
                 'export TERM=xterm-256color; cd /root; '
                 f'BIN={shlex.quote(bin_path)}; SERVICE={shlex.quote(service)}; REPO={shlex.quote(repo)}; '
@@ -1950,6 +1994,10 @@ async def run_proxy_tool_task(bot, chat_id, s, jid, kind, action, mode=None):
                 f'if [[ ! -x "$BIN" || ! -f "/etc/systemd/system/$SERVICE.service" ]]; then '
                 f'  echo "GUKO_STATUS:未安装，开始安装"; '
                 f'  {install_cmd}; '
+                f'elif [[ "{kind}" == "vless" && -s /usr/local/etc/xray/config.json ]]; then '
+                f'  echo "GUKO_STATUS:已安装且已有配置，无需重新安装"; '
+                f'  if command -v systemctl >/dev/null 2>&1 && ! systemctl is-active --quiet "$SERVICE"; then echo "GUKO_STATUS:服务未运行，尝试启动"; systemctl start "$SERVICE" || true; fi; '
+                f'  if [[ -s /usr/local/etc/xray/client.txt ]]; then cat /usr/local/etc/xray/client.txt; else echo "服务端配置: /usr/local/etc/xray/config.json"; cat /usr/local/etc/xray/config.json; fi; '
                 f'elif [[ "{kind}" != "ss" && "{kind}" != "anytls" ]]; then '
                 f'  echo "GUKO_STATUS:开始安装/更新协议服务端"; '
                 f'  {install_cmd}; '
@@ -1964,18 +2012,31 @@ async def run_proxy_tool_task(bot, chat_id, s, jid, kind, action, mode=None):
             )
             timeout = 1800
         elif action == 'view':
-            remote = (
-                'export TERM=xterm-256color; cd /root; '
-                f'tmp=$(mktemp /root/guko-{kind}.XXXXXX.sh); '
-                f'curl -LfsS {shlex.quote(script)} -o "$tmp"; chmod +x "$tmp"; '
-                f'{'printf %b 9\\n0\\n | bash \"$tmp\"' if kind == 'vless' else 'bash \"$tmp\" view'} 2>&1'
-            )
+            if kind == 'vless':
+                remote = (
+                    'export TERM=xterm-256color; '
+                    'if [[ -s /usr/local/etc/xray/client.txt ]]; then '
+                    '  cat /usr/local/etc/xray/client.txt; '
+                    'elif [[ -s /usr/local/etc/xray/config.json ]]; then '
+                    '  echo "服务端配置: /usr/local/etc/xray/config.json"; '
+                    '  cat /usr/local/etc/xray/config.json; '
+                    'else '
+                    '  echo "暂无配置"; '
+                    'fi 2>&1'
+                )
+            else:
+                remote = (
+                    'export TERM=xterm-256color; cd /root; '
+                    f'tmp=$(mktemp /root/guko-{kind}.XXXXXX.sh); '
+                    f'curl -LfsS {shlex.quote(script)} -o "$tmp"; chmod +x "$tmp"; '
+                    'bash "$tmp" view 2>&1'
+                )
             timeout = 300
         else:
             raise RuntimeError('未知操作')
         code, out = await run_subprocess(ssh_args(s, remote, tty=False), timeout=timeout, env=ssh_env_for(s))
-        body = proxy_extract_config(out, kind)
-        ok = code == 0 and body
+        sections = proxy_extract_config(out, kind)
+        ok = code == 0 and bool(sections)
         JOBS[jid].update({'status': 'done' if ok else 'failed', 'log': out, 'target': action})
         if action in ('install', 'ensure'):
             if 'GUKO_STATUS:未安装' in out:
@@ -1996,7 +2057,7 @@ async def run_proxy_tool_task(bot, chat_id, s, jid, kind, action, mode=None):
         status_text = '\n'.join(status_lines).strip()
         if status_text:
             msg += f"\n{safe(status_text)}"
-        msg += f"\n\n<pre>{safe(body or '无输出')}</pre>\n\n{script_command_html(kind, action=action, mode=mode)}"
+        msg += f"\n\n{format_proxy_config_html(sections)}"
         await send_long_text(bot, chat_id, msg, parse_mode=ParseMode.HTML)
     except Exception as e:
         JOBS[jid].update({'status': 'failed', 'log': repr(e), 'target': action})
