@@ -28,7 +28,7 @@ from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-GUKO_VERSION = os.environ.get('GUKO_VERSION', '0.1.16').strip() or '0.1.16'
+GUKO_VERSION = os.environ.get('GUKO_VERSION', '0.1.17').strip() or '0.1.17'
 DATA_DIR = Path(os.environ.get('DATA_DIR', '/data'))
 SERVERS_JSON = Path(os.environ.get('GUKO_INV') or os.environ.get('VPSPILOT_INV') or DATA_DIR / 'servers.json')
 MEDIA_DIR = Path(os.environ.get('MEDIA_DIR', DATA_DIR / 'media'))
@@ -1982,7 +1982,10 @@ async def run_proxy_tool_task(bot, chat_id, s, jid, kind, action, mode=None):
             install_cmd = f'printf %b {shlex.quote(answers)} | bash "$tmp" install'
             if kind == 'vless':
                 menu_choice = '3' if mode == 'reality' else '2'
-                safe_sed = "perl -0pi -e 's/\\$XRAY_BIN test -config \"\\$CONFIG\"/if \\$XRAY_BIN help 2>\\/dev\\/null | grep -qE \"^[[:space:]]*test[[:space:]]\"; then \\$XRAY_BIN test -config \"\\$CONFIG\"; else \\$XRAY_BIN run -test -config \"\\$CONFIG\"; fi/' \"$tmp\"; "
+                safe_sed = (
+                    "perl -0pi -e 's/\\$XRAY_BIN test -config \"\\$CONFIG\"/if \\$XRAY_BIN help 2>\\/dev\\/null | grep -qE \"^[[:space:]]*test[[:space:]]\"; then \\$XRAY_BIN test -config \"\\$CONFIG\"; else \\$XRAY_BIN run -test -config \"\\$CONFIG\"; fi/' \"$tmp\"; "
+                    "perl -0pi -e 's/\\\"geoip:private\\\"/\\\"127.0.0.0\\\\\\/8\\\",\\\"10.0.0.0\\\\\\/8\\\",\\\"172.16.0.0\\\\\\/12\\\",\\\"192.168.0.0\\\\\\/16\\\",\\\"fc00::\\\\\\/7\\\"/g' \"$tmp\"; "
+                )
                 if dynamic_vless_port:
                     install_cmd = f"{safe_sed}guko_port=8443; if ss -lnt | awk 'NR>1 {{print $4}}' | grep -Eq '(^|:)8443$'; then while :; do guko_port=$(shuf -i 20000-65000 -n 1); ss -lnt | awk 'NR>1 {{print $4}}' | grep -Eq \"(^|:)${{guko_port}}$\" || break; done; echo \"GUKO_STATUS:默认端口 8443 已占用，改用 $guko_port\"; fi; printf \"%b\" \"{menu_choice}\\n${{guko_port}}\\n\\n0\\n\" | bash \"$tmp\""
                 else:
@@ -1998,10 +2001,12 @@ async def run_proxy_tool_task(bot, chat_id, s, jid, kind, action, mode=None):
                 f'if [[ ! -x "$BIN" || ! -f "/etc/systemd/system/$SERVICE.service" ]]; then '
                 f'  echo "GUKO_STATUS:未安装，开始安装"; '
                 f'  {install_cmd}; '
-                f"elif [[ \"{kind}\" == \"vless\" && -s /usr/local/etc/xray/client.txt && -s /usr/local/etc/xray/config.json ]] && jq -e '.inbounds and (.inbounds|length>0) and .inbounds[0].protocol == \"vless\"' /usr/local/etc/xray/config.json >/dev/null 2>&1; then "
+                f"elif [[ \"{kind}\" == \"vless\" && -s /usr/local/etc/xray/client.txt && -s /usr/local/etc/xray/config.json ]] && jq -e '.inbounds and (.inbounds|length>0) and any(.inbounds[]; .protocol == \"vless\")' /usr/local/etc/xray/config.json >/dev/null 2>&1; then "
                 f'  echo "GUKO_STATUS:已安装且已有配置，无需重新安装"; '
                 f'  if command -v systemctl >/dev/null 2>&1 && ! systemctl is-active --quiet "$SERVICE"; then echo "GUKO_STATUS:服务未运行，尝试启动"; systemctl start "$SERVICE" || true; fi; '
                 f'  cat /usr/local/etc/xray/client.txt; '
+                f"elif [[ \"{kind}\" == \"vless\" && -s /usr/local/etc/xray/config.json ]] && jq -e '.inbounds and (.inbounds|length>0) and all(.inbounds[]; .protocol != \"vless\")' /usr/local/etc/xray/config.json >/dev/null 2>&1; then "
+                f'  echo "GUKO_STATUS:检测到现有 Xray 配置不是 VLESS，为避免覆盖请先迁移/备份现有配置或手动安装"; exit 23; '
                 f'elif [[ "{kind}" != "ss" && "{kind}" != "anytls" ]]; then '
                 f'  echo "GUKO_STATUS:开始安装/更新协议服务端"; '
                 f'  {install_cmd}; '

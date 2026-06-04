@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.1.17] - 2026-06-04
+
+- 修复 VLESS 安装/查看逻辑：已有 VLESS 配置时识别任意 inbound，不再只检查第一个 inbound。
+- 避免在目标机已有非 VLESS 的 Xray 配置时被 GUKO VLESS 安装覆盖，改为提示冲突并退出。
+- 修复 Xray-VLESS-Manager 在缺少 `geoip.dat` 的机器上因 `geoip:private` 导致启动失败的问题。
+
 ## [0.1.16] - 2026-06-04
 
 - NodeQuality 完成消息不再输出调试用的“原始报告接口”。
