@@ -28,7 +28,7 @@ from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-GUKO_VERSION = os.environ.get('GUKO_VERSION', '0.1.15').strip() or '0.1.15'
+GUKO_VERSION = os.environ.get('GUKO_VERSION', '0.1.16').strip() or '0.1.16'
 DATA_DIR = Path(os.environ.get('DATA_DIR', '/data'))
 SERVERS_JSON = Path(os.environ.get('GUKO_INV') or os.environ.get('VPSPILOT_INV') or DATA_DIR / 'servers.json')
 MEDIA_DIR = Path(os.environ.get('MEDIA_DIR', DATA_DIR / 'media'))
@@ -2933,11 +2933,6 @@ async def run_nq_task(bot, chat_id, s, jid, mask=NQ_ALL_MASK, ip_mode='4'):
             msg += f"\n\nNodeQuality:\n{safe(nq)}"
         if gb_urls:
             msg += "\n\nGeekbench:\n" + "\n".join(safe(u) for u in gb_urls)
-            if not image_ok:
-                token = nodequality_token(nq)
-                api = f"https://api.nodequality.com/api/v1/record/{token}" if token else None
-                if api:
-                    msg += f"\n原始报告接口：\n{safe(api)}"
         if mask != NQ_ALL_MASK and not image_ok and report_links:
             msg += "\n\n分项报告：\n" + "\n".join(f"- {safe(label)}: {safe(url)}" for label, url in report_links)
             if image_error:
