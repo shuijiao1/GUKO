@@ -28,7 +28,7 @@ from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-GUKO_VERSION = os.environ.get('GUKO_VERSION', '0.1.19').strip() or '0.1.19'
+GUKO_VERSION = os.environ.get('GUKO_VERSION', '0.1.20').strip() or '0.1.20'
 DATA_DIR = Path(os.environ.get('DATA_DIR', '/data'))
 SERVERS_JSON = Path(os.environ.get('GUKO_INV') or os.environ.get('VPSPILOT_INV') or DATA_DIR / 'servers.json')
 MEDIA_DIR = Path(os.environ.get('MEDIA_DIR', DATA_DIR / 'media'))
@@ -439,6 +439,8 @@ def safe_target(value):
 
 def country_flag(code):
     code = (code or '').strip().upper()
+    if code == 'TW':
+        code = 'CN'
     if len(code) != 2 or not code.isalpha():
         return '🌐'
     return chr(0x1F1E6 + ord(code[0]) - ord('A')) + chr(0x1F1E6 + ord(code[1]) - ord('A'))
@@ -448,15 +450,22 @@ def geolocate_host(host, timeout=4):
     ip = extract_ipv4(host or '')
     if not ip:
         return None
-    try:
-        url = f'http://ip-api.com/json/{ip}?fields=status,countryCode,query,message'
-        req = urllib.request.Request(url, headers={'User-Agent': 'GUKO/1.0'})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            data = json.loads(resp.read().decode(errors='replace'))
-        if data.get('status') == 'success' and data.get('countryCode'):
-            return str(data['countryCode']).lower()
-    except Exception:
-        return None
+    # Match Kulin/Nezha GeoIP behavior: prefer ipapi country_code.
+    # ip-api may classify some broadcast/geo-routed VPS IPs differently.
+    providers = [
+        (f'https://ipapi.co/{ip}/json/', lambda d: d.get('country_code') or d.get('country')),
+        (f'http://ip-api.com/json/{ip}?fields=status,countryCode,query,message', lambda d: d.get('countryCode') if d.get('status') == 'success' else None),
+    ]
+    for url, pick in providers:
+        try:
+            req = urllib.request.Request(url, headers={'User-Agent': 'GUKO/1.0'})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                data = json.loads(resp.read().decode(errors='replace'))
+            code = pick(data)
+            if code:
+                return str(code).lower()
+        except Exception:
+            continue
     return None
 
 
