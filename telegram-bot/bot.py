@@ -28,7 +28,7 @@ from telegram.constants import ChatAction, ParseMode
 from telegram.error import BadRequest
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 
-GUKO_VERSION = os.environ.get('GUKO_VERSION', '0.1.18').strip() or '0.1.18'
+GUKO_VERSION = os.environ.get('GUKO_VERSION', '0.1.19').strip() or '0.1.19'
 DATA_DIR = Path(os.environ.get('DATA_DIR', '/data'))
 SERVERS_JSON = Path(os.environ.get('GUKO_INV') or os.environ.get('VPSPILOT_INV') or DATA_DIR / 'servers.json')
 MEDIA_DIR = Path(os.environ.get('MEDIA_DIR', DATA_DIR / 'media'))
@@ -1309,7 +1309,7 @@ def history_detail_text(s, kind):
         lines.append('参数：' + safe('；'.join(params)))
     urls = item.get('urls') or []
     if urls:
-        lines.append('\n链接：\n' + copy_lines(urls[:8]))
+        lines.append('\n链接：\n' + '\n'.join(safe(u) for u in urls[:8]))
     media = latest_media_path(item)
     if media:
         lines.append('\n图片：点击后会重新发送最近一次结果图。')
@@ -1339,7 +1339,7 @@ def history_text(s):
         lines.append(f'{icon} {safe(kind)} · {safe(item.get("status"))}{safe(dur)}\n   <code>{safe(when)}</code>{safe(suffix)}')
         urls = item.get('urls') or []
         if urls:
-            lines.append('   ' + copy_block(urls[0]))
+            lines.append('   ' + safe(urls[0]))
     return '\n'.join(lines)
 
 
@@ -1389,12 +1389,6 @@ def job_status_text(s):
     return '\n'.join(lines)
 
 
-
-def copy_block(text):
-    return '<pre>' + safe(text) + '</pre>'
-
-def copy_lines(items):
-    return copy_block('\n'.join(str(x) for x in items if x))
 
 def extract_urls(text):
     text = strip_ansi(text or '')
@@ -1927,21 +1921,21 @@ def format_proxy_config_html(body):
     if not body:
         return '<code>无节点配置输出</code>'
     out = []
-    in_quote = False
+    block = []
+
+    def flush_block():
+        if block:
+            out.append('<pre>' + safe('\n'.join(block)) + '</pre>')
+            block.clear()
+
     for raw in str(body).splitlines():
         line = raw.rstrip()
         if is_proxy_link_line(line):
-            if in_quote:
-                out.append('</blockquote>')
-            out.append(f'<blockquote><code>{safe(line.strip())}</code></blockquote>')
-            in_quote = False
+            block.append(line.strip())
         else:
-            if in_quote:
-                out.append('</blockquote>')
-                in_quote = False
+            flush_block()
             out.append(safe(line))
-    if in_quote:
-        out.append('</blockquote>')
+    flush_block()
     return '\n'.join(out).strip()
 
 
@@ -2100,9 +2094,9 @@ async def run_ip_quality_task(bot, chat_id, s, jid):
             JOBS[jid].update({'media_path': saved})
             with png.open('rb') as f:
                 await bot.send_photo(chat_id, photo=f)
-            await bot.send_message(chat_id, f"✅ {safe(s.get('name'))} IP质量完成\n{copy_block(url)}\n\n{script_command_html('ipq')}", parse_mode=ParseMode.HTML)
+            await bot.send_message(chat_id, f"✅ {safe(s.get('name'))} IP质量完成\n{safe(url)}\n\n{script_command_html('ipq')}", parse_mode=ParseMode.HTML)
         except Exception as e:
-            await bot.send_message(chat_id, f"✅ {safe(s.get('name'))} IP质量报告：\n{copy_block(url)}\n\n{script_command_html('ipq')}\n\n转 PNG 失败：<code>{safe(e)}</code>", parse_mode=ParseMode.HTML)
+            await bot.send_message(chat_id, f"✅ {safe(s.get('name'))} IP质量报告：\n{safe(url)}\n\n{script_command_html('ipq')}\n\n转 PNG 失败：<code>{safe(e)}</code>", parse_mode=ParseMode.HTML)
     except Exception as e:
         JOBS[jid].update({'status': 'failed', 'log': repr(e)})
         await bot.send_message(chat_id, f"❌ {safe(s.get('name'))} IP质量任务失败：<code>{safe(e)}</code>", parse_mode=ParseMode.HTML)
@@ -2333,7 +2327,7 @@ async def run_gb5_task(bot, chat_id, s, jid):
         JOBS[jid].update({'media_path': str(img)})
         with img.open('rb') as f:
             await bot.send_photo(chat_id, photo=f)
-        await bot.send_message(chat_id, f"✅ {safe(s.get('name'))} GB5 完成\n{copy_block(scores['url'])}", parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+        await bot.send_message(chat_id, f"✅ {safe(s.get('name'))} GB5 完成\n{safe(scores['url'])}", parse_mode=ParseMode.HTML, disable_web_page_preview=True)
     except Exception as e:
         JOBS[jid].update({'status': 'failed', 'log': repr(e)})
         await bot.send_message(chat_id, f"❌ {safe(s.get('name'))} GB5任务失败：<code>{safe(e)}</code>", parse_mode=ParseMode.HTML)
@@ -2942,11 +2936,11 @@ async def run_nq_task(bot, chat_id, s, jid, mask=NQ_ALL_MASK, ip_mode='4'):
         JOBS[jid].update({'status': 'done' if final_ok else 'failed'})
         msg = f"✅ {safe(s.get('name'))} NodeQuality 完成：{safe(selected_text)}；{safe(ip_text)}" if final_ok else f"❌ {safe(s.get('name'))} NodeQuality 失败：{safe(selected_text)}；{safe(ip_text)}"
         if nq:
-            msg += f"\n\nNodeQuality:\n{copy_block(nq)}"
+            msg += f"\n\nNodeQuality:\n{safe(nq)}"
         if gb_urls:
-            msg += "\n\nGeekbench:\n" + copy_lines(gb_urls)
+            msg += "\n\nGeekbench:\n" + "\n".join(safe(u) for u in gb_urls)
         if mask != NQ_ALL_MASK and not image_ok and report_links:
-            msg += "\n\n分项报告：\n" + copy_lines(f"- {label}: {url}" for label, url in report_links)
+            msg += "\n\n分项报告：\n" + "\n".join(f"- {safe(label)}: {safe(url)}" for label, url in report_links)
             if image_error:
                 msg += f"\n\n转 PNG 失败：<code>{safe(image_error)}</code>"
         if not nq and not report_links:
@@ -2984,11 +2978,11 @@ async def send_history_result(bot, chat_id, s, kind):
                     await bot.send_photo(chat_id, photo=f)
         msg = f"✅ {safe(s.get('name'))} NodeQuality 完成：{safe(selected)}；{safe(ip_mode)}"
         if nq:
-            msg += f"\n\nNodeQuality:\n{copy_block(nq)}"
+            msg += f"\n\nNodeQuality:\n{safe(nq)}"
         if gb_urls:
-            msg += "\n\nGeekbench:\n" + copy_lines(gb_urls)
+            msg += "\n\nGeekbench:\n" + "\n".join(safe(u) for u in gb_urls)
         if not media_paths and report_urls:
-            msg += "\n\n分项报告：\n" + copy_lines(f"- {u}" for u in report_urls)
+            msg += "\n\n分项报告：\n" + "\n".join(f"- {safe(u)}" for u in report_urls)
         msg += f"\n\n{script_command_html('nq', selected=selected, ip_mode=ip_mode)}"
         await bot.send_message(chat_id, msg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
         return True
